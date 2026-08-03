@@ -315,6 +315,7 @@ class SettingsUISchema {
 	 *
 	 * @param array    $schema Settings UI schema.
 	 * @param string[] $converted_fields Affected field ids.
+	 * @param-out string[] $converted_fields
 	 * @return array Canonicalized schema.
 	 */
 	private static function canonicalize_option_values_and_collect( array $schema, array &$converted_fields ): array {
@@ -464,7 +465,9 @@ class SettingsUISchema {
 					continue;
 				}
 
-				self::canonicalize_field( $field, $converted_fields );
+				if ( self::canonicalize_field( $field, $legacy_derived ) ) {
+					$converted_fields[] = $field['id'];
+				}
 			}
 			unset( $field );
 		}
@@ -488,13 +491,14 @@ class SettingsUISchema {
 	/**
 	 * Canonicalize one field in place.
 	 *
-	 * @param array    $field Field definition.
-	 * @param string[] $converted_fields Affected field ids.
+	 * @param array $field Field definition.
+	 * @param bool  $legacy_derived Whether the schema came from legacy settings definitions.
+	 * @return bool Whether the field required compatibility conversion.
 	 */
-	private static function canonicalize_field( array &$field, array &$converted_fields ): void {
+	private static function canonicalize_field( array &$field, bool $legacy_derived ): bool {
 		$type = $field['type'] ?? null;
 		if ( ! is_string( $type ) ) {
-			return;
+			return false;
 		}
 
 		$original_type  = $type;
@@ -502,7 +506,7 @@ class SettingsUISchema {
 
 		$numeric_validation_converted = false;
 
-		if ( 'number' === $type && self::should_promote_to_integer( $field ) ) {
+		if ( $legacy_derived && 'number' === $type && self::should_promote_to_integer( $field ) ) {
 			$type          = 'integer';
 			$field['type'] = $type;
 		}
@@ -531,13 +535,11 @@ class SettingsUISchema {
 			$numeric_validation_converted = self::canonicalize_numeric_validation( $field, 'integer' === $type );
 		}
 
-		if (
+		return (
 			$original_type !== $field['type'] ||
 			( array_key_exists( 'value', $field ) && $original_value !== $field['value'] ) ||
 			$numeric_validation_converted
-		) {
-			$converted_fields[] = $field['id'];
-		}
+		);
 	}
 
 	/**
@@ -708,7 +710,7 @@ class SettingsUISchema {
 		$digits   = ltrim( $whole . $fraction, '0' );
 		$digits   = '' === $digits ? '0' : $digits;
 		$exponent = $matches[5] ?? '0';
-		$negative = '-' === ( $matches[1] ?? '' );
+		$negative = '-' === $matches[1];
 		$scale    = strlen( $fraction );
 
 		if ( strlen( ltrim( $exponent, '+-' ) ) > 6 ) {
@@ -939,7 +941,7 @@ class SettingsUISchema {
 					continue;
 				}
 
-				if ( ! self::is_form_value( $original ) ) {
+				if ( ! self::is_form_value_for_field( $original, $field ) ) {
 					throw self::invalid_schema( sprintf( 'Field "%s" must define save.initialValue before its native form value can be converted.', $field['id'] ) );
 				}
 
@@ -957,9 +959,9 @@ class SettingsUISchema {
 	 * Get a field's effective save adapter.
 	 *
 	 * @param array $field Field definition.
-	 * @return string
+	 * @return mixed
 	 */
-	private static function get_field_save_adapter( array $field ): string {
+	private static function get_field_save_adapter( array $field ) {
 		return isset( $field['save'] ) && is_array( $field['save'] ) ? ( $field['save']['adapter'] ?? 'form_post' ) : 'form_post';
 	}
 
@@ -971,6 +973,31 @@ class SettingsUISchema {
 	 */
 	private static function is_form_value( $value ): bool {
 		return is_string( $value ) || ( is_array( $value ) && ArrayUtil::array_is_list( $value ) && count( $value ) === count( array_filter( $value, 'is_string' ) ) );
+	}
+
+	/**
+	 * Whether a form value preserves the canonical field value through the
+	 * classic save pipeline.
+	 *
+	 * @param mixed $value Candidate form value.
+	 * @param array $field Canonical field definition.
+	 * @return bool
+	 */
+	private static function is_form_value_for_field( $value, array $field ): bool {
+		if ( ! self::is_form_value( $value ) ) {
+			return false;
+		}
+
+		if ( 'checkbox' !== ( $field['type'] ?? null ) ) {
+			return true;
+		}
+
+		if ( ! is_string( $value ) || ! is_bool( $field['value'] ?? null ) ) {
+			return false;
+		}
+
+		$checked = '1' === $value || 'yes' === $value;
+		return $checked === $field['value'];
 	}
 
 	/**
@@ -1716,6 +1743,13 @@ class SettingsUISchema {
 					throw self::invalid_schema( sprintf( 'Field "%s" custom attribute "%s" must be a finite number.', $field['id'], $attribute ) );
 				}
 
+				if ( 'integer' === $field['type'] && 'step' === $attribute ) {
+					$integer_step = self::get_integral_decimal( $value );
+					if ( null === $integer_step || '0' === $integer_step || '-' === substr( $integer_step, 0, 1 ) ) {
+						throw self::invalid_schema( sprintf( 'Field "%s" custom attribute "step" must be a positive integer.', $field['id'] ) );
+					}
+				}
+
 				if ( 'integer' === $field['type'] && in_array( $attribute, array( 'min', 'max' ), true ) && ! is_int( $value ) ) {
 					throw self::invalid_schema( sprintf( 'Field "%s" custom attribute "%s" must be an integer.', $field['id'], $attribute ) );
 				}
@@ -1739,7 +1773,7 @@ class SettingsUISchema {
 
 		foreach ( $field['validation'] as $rule => $value ) {
 			if ( ! in_array( $rule, array( 'min', 'max' ), true ) || null === $value || ! self::is_canonical_number( $value ) ) {
-				throw self::invalid_schema( sprintf( 'Field "%1$s" validation rule "%2$s" must be a finite numeric bound.', $field['id'], is_scalar( $rule ) ? (string) $rule : gettype( $rule ) ) );
+				throw self::invalid_schema( sprintf( 'Field "%1$s" validation rule "%2$s" must be a finite numeric bound.', $field['id'], (string) $rule ) );
 			}
 
 			if ( 'integer' === $field['type'] && ! is_int( $value ) ) {
@@ -1768,13 +1802,42 @@ class SettingsUISchema {
 			self::assert_non_empty_string( $save['name'], sprintf( 'Field "%s" save name must be a non-empty string.', $field['id'] ) );
 		}
 
-		if ( is_array( $save ) && array_key_exists( 'initialValue', $save ) && ! self::is_form_value( $save['initialValue'] ) ) {
-			throw self::invalid_schema( sprintf( 'Field "%s" save.initialValue must be a string or string list.', $field['id'] ) );
+		if ( 'form_post' === $adapter ) {
+			$name = is_array( $save ) && array_key_exists( 'name', $save ) ? $save['name'] : $field['id'];
+			if ( ! self::is_supported_form_post_name( $name, 'array' === $field['type'] ) ) {
+				throw self::invalid_schema( sprintf( 'Field "%s" save name "%s" is not a supported form-post field name.', $field['id'], $name ) );
+			}
+		}
+
+		if ( is_array( $save ) && array_key_exists( 'initialValue', $save ) ) {
+			if ( ! self::is_form_value( $save['initialValue'] ) ) {
+				throw self::invalid_schema( sprintf( 'Field "%s" save.initialValue must be a string or string list.', $field['id'] ) );
+			}
+
+			if ( ! self::is_form_value_for_field( $save['initialValue'], $field ) ) {
+				throw self::invalid_schema( sprintf( 'Field "%s" save.initialValue must preserve its canonical value through classic form-post semantics.', $field['id'] ) );
+			}
 		}
 
 		if ( 'info' === $field['type'] && 'none' !== $adapter ) {
 			throw self::invalid_schema( sprintf( 'Field "%s" of type "info" must use the "none" save adapter.', $field['id'] ) );
 		}
+	}
+
+	/**
+	 * Whether a field name can be serialized by the form-post adapter.
+	 *
+	 * @param mixed $name Candidate field name.
+	 * @param bool  $is_array Whether the field posts a string list.
+	 * @return bool
+	 */
+	private static function is_supported_form_post_name( $name, bool $is_array ): bool {
+		if ( ! is_string( $name ) || '' === $name ) {
+			return false;
+		}
+
+		$base_name = $is_array && '[]' === substr( $name, -2 ) ? substr( $name, 0, -2 ) : $name;
+		return 1 === preg_match( '/^[^\[\]]+(?:\[[^\[\]]+\])?$/', $base_name );
 	}
 
 	/**
@@ -1875,14 +1938,26 @@ class SettingsUISchema {
 		}
 
 		if ( is_int( $value ) ) {
-			return ! self::unsigned_decimal_is_greater( ltrim( (string) $value, '-' ), self::JAVASCRIPT_SAFE_INTEGER );
+			/**
+			 * Unsigned decimal representation.
+			 *
+			 * @var string $absolute
+			 */
+			$absolute = ltrim( (string) $value, '-' );
+			return ! self::unsigned_decimal_is_greater( $absolute, self::JAVASCRIPT_SAFE_INTEGER );
 		}
 
 		if ( ! is_float( $value ) || ! is_finite( $value ) ) {
 			return false;
 		}
 
-		return floor( $value ) !== $value || ! self::unsigned_decimal_is_greater( ltrim( sprintf( '%.0f', $value ), '-' ), self::JAVASCRIPT_SAFE_INTEGER );
+		/**
+		 * Unsigned decimal representation.
+		 *
+		 * @var string $absolute
+		 */
+		$absolute = ltrim( sprintf( '%.0f', $value ), '-' );
+		return floor( $value ) !== $value || ! self::unsigned_decimal_is_greater( $absolute, self::JAVASCRIPT_SAFE_INTEGER );
 	}
 
 	/**
