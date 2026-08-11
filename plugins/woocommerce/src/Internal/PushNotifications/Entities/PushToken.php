@@ -570,7 +570,13 @@ class PushToken {
 	 * endpoint, so adding fields to it would change what every notification
 	 * sends over the wire.
 	 *
-	 * @return array{user_id: int|null, token: string|null, origin: string|null, device_locale: string|null, created_at: string|null, updated_at: string|null}
+	 * Carries the fields the diagnostic tooling needs to describe a device that
+	 * the send payload has no use for. `id` gives each token a stable handle to
+	 * link to, `device_uuid` is what lets several tokens be recognised as the
+	 * same physical device across different users, and `platform` and
+	 * `metadata` supply the app, OS and version a device is identified by.
+	 *
+	 * @return array{user_id: int|null, token: string|null, origin: string|null, device_locale: string|null, id: int|null, device_uuid: string|null, platform: string|null, metadata: array, created_at: string|null, updated_at: string|null}
 	 *
 	 * @since 11.2.0
 	 */
@@ -578,8 +584,12 @@ class PushToken {
 		return array_merge(
 			$this->to_wpcom_format(),
 			array(
-				'created_at' => $this->created_at,
-				'updated_at' => $this->updated_at,
+				'id'          => $this->id,
+				'device_uuid' => $this->device_uuid,
+				'platform'    => $this->platform,
+				'metadata'    => $this->metadata ?? array(),
+				'created_at'  => $this->created_at,
+				'updated_at'  => $this->updated_at,
 			)
 		);
 	}

@@ -799,20 +799,22 @@ class PushTokenTest extends WC_Unit_Test_Case {
 	}
 
 	/**
-	 * @testdox Tests the REST format adds timestamps without altering the WPCOM send payload.
+	 * @testdox Tests the REST format adds diagnostic fields without altering the WPCOM send payload.
 	 *
 	 * `to_wpcom_format()` is the per-token payload the dispatcher POSTs to WPCOM
-	 * on every notification, so it must stay unchanged by this addition.
+	 * on every notification, so it must stay unchanged by these additions.
 	 */
-	public function test_rest_format_adds_timestamps_without_changing_wpcom_format() {
+	public function test_rest_format_adds_fields_without_changing_wpcom_format() {
 		$push_token = new PushToken(
 			array(
+				'id'            => 77,
 				'user_id'       => 42,
 				'token'         => 'rest_format_token',
 				'platform'      => PushToken::PLATFORM_APPLE,
 				'device_uuid'   => 'rest-format-uuid',
 				'origin'        => PushToken::ORIGIN_WOOCOMMERCE_IOS,
 				'device_locale' => 'en_US',
+				'metadata'      => array( 'app_version' => '21.1' ),
 				'created_at'    => '2026-08-01 09:30:00',
 				'updated_at'    => '2026-08-11 14:45:12',
 			)
@@ -826,8 +828,27 @@ class PushTokenTest extends WC_Unit_Test_Case {
 			array_keys( $wpcom_format )
 		);
 
+		$this->assertSame( 77, $rest_format['id'] );
+		$this->assertSame( 'rest-format-uuid', $rest_format['device_uuid'] );
+		$this->assertSame( PushToken::PLATFORM_APPLE, $rest_format['platform'] );
+		$this->assertSame( array( 'app_version' => '21.1' ), $rest_format['metadata'] );
 		$this->assertSame( '2026-08-01T09:30:00', $rest_format['created_at'] );
 		$this->assertSame( '2026-08-11T14:45:12', $rest_format['updated_at'] );
 		$this->assertSame( $wpcom_format, array_intersect_key( $rest_format, $wpcom_format ) );
+	}
+
+	/**
+	 * @testdox Tests the REST format reports metadata as an array when a token has none.
+	 *
+	 * Browser tokens and tokens registered before metadata existed have no value
+	 * stored, and the tooling should not have to handle both null and an array.
+	 */
+	public function test_rest_format_reports_absent_metadata_as_an_empty_array() {
+		$rest_format = ( new PushToken() )->to_rest_format();
+
+		$this->assertSame( array(), $rest_format['metadata'] );
+		$this->assertNull( $rest_format['id'] );
+		$this->assertNull( $rest_format['device_uuid'] );
+		$this->assertNull( $rest_format['platform'] );
 	}
 }

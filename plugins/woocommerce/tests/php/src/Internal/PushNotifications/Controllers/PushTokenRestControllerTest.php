@@ -1513,6 +1513,40 @@ class PushTokenRestControllerTest extends WC_Unit_Test_Case {
 	}
 
 	/**
+	 * @testdox Should return the fields needed to describe the device a token belongs to.
+	 */
+	public function test_index_returns_device_identifying_fields(): void {
+		$this->mock_jetpack_connection_manager_is_connected();
+		wc_get_container()->get( PushNotifications::class )->on_init();
+
+		$data_store = wc_get_container()->get( PushTokensDataStore::class );
+
+		$push_token = $data_store->create(
+			array(
+				'user_id'       => $this->user_id,
+				'token'         => 'device-fields-test-token',
+				'platform'      => PushToken::PLATFORM_APPLE,
+				'device_uuid'   => 'device-fields-test-uuid',
+				'origin'        => PushToken::ORIGIN_WOOCOMMERCE_IOS,
+				'device_locale' => 'en_US',
+				'metadata'      => array( 'app_version' => '21.1' ),
+			)
+		);
+
+		$controller = new PushTokenRestController();
+		$request    = new WP_REST_Request( 'GET', '/wc-push-notifications/push-tokens' );
+		$request->set_param( 'page', 1 );
+		$request->set_param( 'per_page', 100 );
+
+		$token_data = $controller->index( $request )->get_data()['tokens'][0];
+
+		$this->assertSame( $push_token->get_id(), $token_data['id'] );
+		$this->assertSame( 'device-fields-test-uuid', $token_data['device_uuid'] );
+		$this->assertSame( PushToken::PLATFORM_APPLE, $token_data['platform'] );
+		$this->assertSame( array( 'app_version' => '21.1' ), $token_data['metadata'] );
+	}
+
+	/**
 	 * @testdox Should return empty tokens array from the tokens endpoint when no tokens exist.
 	 */
 	public function test_index_returns_empty_when_no_tokens(): void {
