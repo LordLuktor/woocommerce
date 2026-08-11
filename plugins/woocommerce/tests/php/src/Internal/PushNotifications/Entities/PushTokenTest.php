@@ -758,4 +758,76 @@ class PushTokenTest extends WC_Unit_Test_Case {
 			)
 		);
 	}
+
+	/**
+	 * @testdox Tests GMT datetimes are converted to RFC3339 for the timestamp fields.
+	 */
+	public function test_it_converts_gmt_datetimes_to_rfc3339() {
+		$push_token = new PushToken(
+			array(
+				'created_at' => '2026-08-01 09:30:00',
+				'updated_at' => '2026-08-11 14:45:12',
+			)
+		);
+
+		$this->assertSame( '2026-08-01T09:30:00', $push_token->get_created_at() );
+		$this->assertSame( '2026-08-11T14:45:12', $push_token->get_updated_at() );
+	}
+
+	/**
+	 * @testdox Tests timestamps default to null so an unknown date is distinguishable from a real one.
+	 *
+	 * The MySQL zero date and an empty string both mean "we don't know when
+	 * this happened", and must not be surfaced as if they were real dates.
+	 */
+	public function test_it_normalizes_unknown_timestamps_to_null() {
+		$this->assertNull( ( new PushToken() )->get_created_at() );
+		$this->assertNull( ( new PushToken() )->get_updated_at() );
+
+		$push_token = new PushToken(
+			array(
+				'created_at' => '0000-00-00 00:00:00',
+				'updated_at' => '',
+			)
+		);
+
+		$this->assertNull( $push_token->get_created_at() );
+		$this->assertNull( $push_token->get_updated_at() );
+
+		$push_token->set_created_at( null );
+		$this->assertNull( $push_token->get_created_at() );
+	}
+
+	/**
+	 * @testdox Tests the REST format adds timestamps without altering the WPCOM send payload.
+	 *
+	 * `to_wpcom_format()` is the per-token payload the dispatcher POSTs to WPCOM
+	 * on every notification, so it must stay unchanged by this addition.
+	 */
+	public function test_rest_format_adds_timestamps_without_changing_wpcom_format() {
+		$push_token = new PushToken(
+			array(
+				'user_id'       => 42,
+				'token'         => 'rest_format_token',
+				'platform'      => PushToken::PLATFORM_APPLE,
+				'device_uuid'   => 'rest-format-uuid',
+				'origin'        => PushToken::ORIGIN_WOOCOMMERCE_IOS,
+				'device_locale' => 'en_US',
+				'created_at'    => '2026-08-01 09:30:00',
+				'updated_at'    => '2026-08-11 14:45:12',
+			)
+		);
+
+		$wpcom_format = $push_token->to_wpcom_format();
+		$rest_format  = $push_token->to_rest_format();
+
+		$this->assertSame(
+			array( 'user_id', 'token', 'origin', 'device_locale' ),
+			array_keys( $wpcom_format )
+		);
+
+		$this->assertSame( '2026-08-01T09:30:00', $rest_format['created_at'] );
+		$this->assertSame( '2026-08-11T14:45:12', $rest_format['updated_at'] );
+		$this->assertSame( $wpcom_format, array_intersect_key( $rest_format, $wpcom_format ) );
+	}
 }

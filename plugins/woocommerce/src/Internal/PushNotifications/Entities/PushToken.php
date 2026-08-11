@@ -143,6 +143,20 @@ class PushToken {
 	private ?array $metadata = null;
 
 	/**
+	 * The date the token was registered, as an RFC3339 string in UTC.
+	 *
+	 * @var string|null
+	 */
+	private ?string $created_at = null;
+
+	/**
+	 * The date the token was last refreshed, as an RFC3339 string in UTC.
+	 *
+	 * @var string|null
+	 */
+	private ?string $updated_at = null;
+
+	/**
 	 * Creates a new PushToken instance with the given data.
 	 *
 	 * @param array $data Optional array with keys: id, user_id, token, device_uuid, platform, origin.
@@ -181,6 +195,14 @@ class PushToken {
 
 		if ( array_key_exists( 'metadata', $data ) ) {
 			$this->set_metadata( (array) $data['metadata'] );
+		}
+
+		if ( array_key_exists( 'created_at', $data ) ) {
+			$this->set_created_at( null === $data['created_at'] ? null : (string) $data['created_at'] );
+		}
+
+		if ( array_key_exists( 'updated_at', $data ) ) {
+			$this->set_updated_at( null === $data['updated_at'] ? null : (string) $data['updated_at'] );
 		}
 	}
 
@@ -362,6 +384,59 @@ class PushToken {
 	}
 
 	/**
+	 * Sets the date the token was registered.
+	 *
+	 * Unlike the other setters this does not run through
+	 * {@see PushTokenValidator}. Timestamps are derived from the underlying
+	 * post record rather than supplied by an API client, so there is no
+	 * untrusted input to guard against.
+	 *
+	 * @param string|null $created_at A GMT `Y-m-d H:i:s` datetime, or null if unknown.
+	 * @return void
+	 *
+	 * @since 11.2.0
+	 */
+	public function set_created_at( ?string $created_at ): void {
+		$this->created_at = $this->normalize_gmt_datetime( $created_at );
+	}
+
+	/**
+	 * Sets the date the token was last refreshed.
+	 *
+	 * See {@see self::set_created_at()} for why this bypasses validation.
+	 *
+	 * @param string|null $updated_at A GMT `Y-m-d H:i:s` datetime, or null if unknown.
+	 * @return void
+	 *
+	 * @since 11.2.0
+	 */
+	public function set_updated_at( ?string $updated_at ): void {
+		$this->updated_at = $this->normalize_gmt_datetime( $updated_at );
+	}
+
+	/**
+	 * Converts a GMT `Y-m-d H:i:s` datetime to RFC3339, matching the format the
+	 * WordPress REST API uses for its own `*_gmt` fields.
+	 *
+	 * Empty values and the MySQL zero date normalize to null so consumers can
+	 * tell "we don't know when this happened" apart from a real date.
+	 *
+	 * @param string|null $datetime The GMT datetime string.
+	 * @return string|null
+	 *
+	 * @since 11.2.0
+	 */
+	private function normalize_gmt_datetime( ?string $datetime ): ?string {
+		$datetime = null === $datetime ? '' : trim( $datetime );
+
+		if ( '' === $datetime || '0000-00-00 00:00:00' === $datetime ) {
+			return null;
+		}
+
+		return mysql_to_rfc3339( $datetime );
+	}
+
+	/**
 	 * Gets the ID.
 	 *
 	 * @return int|null
@@ -450,6 +525,28 @@ class PushToken {
 	}
 
 	/**
+	 * Gets the date the token was registered, as an RFC3339 string in UTC.
+	 *
+	 * @return string|null
+	 *
+	 * @since 11.2.0
+	 */
+	public function get_created_at(): ?string {
+		return $this->created_at;
+	}
+
+	/**
+	 * Gets the date the token was last refreshed, as an RFC3339 string in UTC.
+	 *
+	 * @return string|null
+	 *
+	 * @since 11.2.0
+	 */
+	public function get_updated_at(): ?string {
+		return $this->updated_at;
+	}
+
+	/**
 	 * Returns this token formatted for the WPCOM push notifications endpoint.
 	 *
 	 * @return array{user_id: int|null, token: string|null, origin: string|null, device_locale: string|null}
@@ -462,6 +559,28 @@ class PushToken {
 			'token'         => $this->token,
 			'origin'        => $this->origin,
 			'device_locale' => $this->device_locale ?? self::DEFAULT_DEVICE_LOCALE,
+		);
+	}
+
+	/**
+	 * Returns this token formatted for the push tokens REST index response.
+	 *
+	 * Deliberately separate from {@see self::to_wpcom_format()}: that method is
+	 * also the per-token payload the dispatcher POSTs to the WPCOM send
+	 * endpoint, so adding fields to it would change what every notification
+	 * sends over the wire.
+	 *
+	 * @return array{user_id: int|null, token: string|null, origin: string|null, device_locale: string|null, created_at: string|null, updated_at: string|null}
+	 *
+	 * @since 11.2.0
+	 */
+	public function to_rest_format(): array {
+		return array_merge(
+			$this->to_wpcom_format(),
+			array(
+				'created_at' => $this->created_at,
+				'updated_at' => $this->updated_at,
+			)
 		);
 	}
 

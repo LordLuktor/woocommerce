@@ -125,7 +125,7 @@ class PushTokenRestController extends RestApiControllerBase {
 
 	/**
 	 * Returns all push tokens for roles that can receive push notifications,
-	 * formatted for the WPCOM push notifications endpoint.
+	 * along with when each token was registered and last refreshed.
 	 *
 	 * @since 10.8.0
 	 *
@@ -157,7 +157,7 @@ class PushTokenRestController extends RestApiControllerBase {
 		$response = new WP_REST_Response(
 			array(
 				'tokens' => array_map(
-					fn ( $token ) => $token->to_wpcom_format(),
+					fn ( $token ) => $token->to_rest_format(),
 					$result['tokens']
 				),
 			),

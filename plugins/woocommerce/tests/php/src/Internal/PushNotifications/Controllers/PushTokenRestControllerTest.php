@@ -1476,6 +1476,43 @@ class PushTokenRestControllerTest extends WC_Unit_Test_Case {
 	}
 
 	/**
+	 * @testdox Should return registration and refresh timestamps for each token.
+	 */
+	public function test_index_returns_token_timestamps(): void {
+		$this->mock_jetpack_connection_manager_is_connected();
+		wc_get_container()->get( PushNotifications::class )->on_init();
+
+		$data_store = wc_get_container()->get( PushTokensDataStore::class );
+
+		$push_token = $data_store->create(
+			array(
+				'user_id'       => $this->user_id,
+				'token'         => 'timestamps-test-token',
+				'platform'      => PushToken::PLATFORM_APPLE,
+				'device_uuid'   => 'timestamps-test-uuid',
+				'origin'        => PushToken::ORIGIN_WOOCOMMERCE_IOS,
+				'device_locale' => 'en_US',
+			)
+		);
+
+		$controller = new PushTokenRestController();
+		$request    = new WP_REST_Request( 'GET', '/wc-push-notifications/push-tokens' );
+		$request->set_param( 'page', 1 );
+		$request->set_param( 'per_page', 100 );
+		$response = $controller->index( $request );
+
+		$this->assertEquals( WP_Http::OK, $response->get_status() );
+
+		$token_data = $response->get_data()['tokens'][0];
+		$post       = get_post( $push_token->get_id() );
+
+		$this->assertArrayHasKey( 'created_at', $token_data );
+		$this->assertArrayHasKey( 'updated_at', $token_data );
+		$this->assertSame( mysql_to_rfc3339( $post->post_date_gmt ), $token_data['created_at'] );
+		$this->assertSame( mysql_to_rfc3339( $post->post_modified_gmt ), $token_data['updated_at'] );
+	}
+
+	/**
 	 * @testdox Should return empty tokens array from the tokens endpoint when no tokens exist.
 	 */
 	public function test_index_returns_empty_when_no_tokens(): void {

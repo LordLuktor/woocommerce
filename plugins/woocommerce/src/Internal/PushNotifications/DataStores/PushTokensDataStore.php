@@ -130,6 +130,14 @@ class PushTokensDataStore {
 		$push_token->set_device_locale( $meta['device_locale'] ?? PushToken::DEFAULT_DEVICE_LOCALE );
 		$push_token->set_metadata( $meta['metadata'] ?? array() );
 
+		/**
+		 * Registration and refresh times come from the post record rather than
+		 * meta: WordPress already maintains them, and `wp_update_post()` bumps
+		 * `post_modified_gmt` whenever the app re-registers a device.
+		 */
+		$push_token->set_created_at( $post->post_date_gmt );
+		$push_token->set_updated_at( $post->post_modified_gmt );
+
 		return $push_token;
 	}
 
