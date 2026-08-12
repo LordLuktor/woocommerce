@@ -417,43 +417,30 @@ class PushToken {
 	}
 
 	/**
-	 * Converts a GMT `Y-m-d H:i:s` datetime to an RFC3339 string carrying an
-	 * explicit `+00:00` offset.
+	 * Converts a GMT `Y-m-d H:i:s` datetime to RFC3339 with an explicit
+	 * `+00:00` offset.
 	 *
-	 * Deliberately not `mysql_to_rfc3339()`, despite the name that function
-	 * carries. It strips the timezone, which core's own docblock notes means
-	 * the output "does not conform to RFC3339 format, which must contain
-	 * timezone". A consumer calling `new Date()` on an offset-less string gets
-	 * it parsed as local time, so a support engineer in UTC+10 would read a
-	 * token registered five minutes ago as ten hours away.
+	 * Deliberately not `mysql_to_rfc3339()`, whose name suggests otherwise.
+	 * Core documents its output as not conforming to RFC3339 because it strips
+	 * the timezone, and consumers parse an offset-less string as local time.
 	 *
-	 * The timezone is also stated rather than inherited. `mysql2date()` builds
-	 * its date in `wp_timezone()`, the store's timezone, and only avoids
-	 * shifting the value because its format string performs no conversion. A UK
-	 * store would report times an hour out through BST if that ever changed.
-	 * Every value reaching this method is GMT by construction, from
-	 * `post_date_gmt`, `post_modified_gmt`, or `gmdate()`, so parsing as UTC is
-	 * correct and does not depend on a site setting.
+	 * Values are GMT by construction, from `post_date_gmt`, `post_modified_gmt`
+	 * or `gmdate()`, so the parse names UTC rather than inheriting the store's
+	 * timezone.
 	 *
-	 * The format is matched exactly rather than sniffed, because the permissive
-	 * parsers accept input this method's contract does not allow:
+	 * The format is matched exactly because the permissive parsers accept input
+	 * this contract does not allow:
 	 *
-	 *     '0000-00-00 00:00:00'       => rejected here, else year -0001
-	 *     ''                          => rejected here, else the current time
-	 *     '2026-02-30 09:30:00'       => rejected, else silently 2026-03-02
-	 *     '2026-08-01T09:30:00+05:00' => rejected, else read as +05:00
+	 *     '0000-00-00 00:00:00'       => else year -0001
+	 *     ''                          => else the current time
+	 *     '2026-02-30 09:30:00'       => else silently 2026-03-02
+	 *     '2026-08-01T09:30:00+05:00' => else read as +05:00
 	 *
-	 * The last two are why `createFromFormat()` and the warning check are both
-	 * needed. An offset in the input overrides the timezone argument, so a
-	 * value written in local time would be read as local time rather than
-	 * flagged, and an impossible date rolls forward into a plausible one.
-	 * `createFromFormat()` rejects the offset outright, and the warning check
-	 * catches the rollover, which it performs but reports.
+	 * `createFromFormat()` rejects the offset, but performs the rollover and
+	 * only reports it, so the warning check is needed too.
 	 *
 	 * @param string|null $datetime The GMT datetime string.
 	 * @return string|null
-	 *
-	 * @since 11.2.0
 	 */
 	private function normalize_gmt_datetime( ?string $datetime ): ?string {
 		$datetime = null === $datetime ? '' : trim( $datetime );
@@ -462,15 +449,14 @@ class PushToken {
 			return null;
 		}
 
-		// The leading `!` resets the fields the format does not set, so a short
-		// match cannot silently inherit today's date.
+		// The leading `!` resets fields the format does not set, so a short
+		// match cannot inherit today's date.
 		$parsed = DateTimeImmutable::createFromFormat( '!Y-m-d H:i:s', $datetime, new DateTimeZone( 'UTC' ) );
 		$errors = DateTimeImmutable::getLastErrors();
 
-		// Returns false rather than throwing on a value it cannot match.
-		// Returning that straight out would be a TypeError against this
-		// method's ?string return, and TypeError extends Error, so no caller's
-		// catch block on the send path would stop it becoming a fatal.
+		// Returning the false straight out would be a TypeError against this
+		// method's `?string`, and TypeError extends Error, so no catch block on
+		// the send path would stop it becoming a fatal.
 		if ( false === $parsed || ( $errors && ( $errors['warning_count'] || $errors['error_count'] ) ) ) {
 			return null;
 		}
