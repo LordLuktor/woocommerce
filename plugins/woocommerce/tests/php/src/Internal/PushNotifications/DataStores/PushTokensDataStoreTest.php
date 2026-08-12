@@ -969,8 +969,8 @@ class PushTokensDataStoreTest extends WC_Unit_Test_Case {
 		$post = get_post( $push_token->get_id() );
 		$read = $data_store->read( $push_token->get_id() );
 
-		$this->assertSame( mysql_to_rfc3339( $post->post_date_gmt ), $read->get_created_at() );
-		$this->assertSame( mysql_to_rfc3339( $post->post_modified_gmt ), $read->get_updated_at() );
+		$this->assertSame( gmdate( DATE_RFC3339, strtotime( $post->post_date_gmt . ' UTC' ) ), $read->get_created_at_gmt() );
+		$this->assertSame( gmdate( DATE_RFC3339, strtotime( $post->post_modified_gmt . ' UTC' ) ), $read->get_updated_at_gmt() );
 	}
 
 	/**
@@ -999,8 +999,8 @@ class PushTokensDataStoreTest extends WC_Unit_Test_Case {
 
 		$read = $data_store->read( $push_token->get_id() );
 
-		$this->assertSame( '2026-01-01T00:00:00', $read->get_created_at() );
-		$this->assertGreaterThan( $read->get_created_at(), $read->get_updated_at() );
+		$this->assertSame( '2026-01-01T00:00:00+00:00', $read->get_created_at_gmt() );
+		$this->assertGreaterThan( $read->get_created_at_gmt(), $read->get_updated_at_gmt() );
 	}
 
 	/**

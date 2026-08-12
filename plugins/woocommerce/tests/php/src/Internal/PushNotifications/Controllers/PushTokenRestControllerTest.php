@@ -507,7 +507,8 @@ class PushTokenRestControllerTest extends WC_Unit_Test_Case {
 		$this->mock_jetpack_connection_manager_is_connected( true );
 
 		$request = new WP_REST_Request( 'POST', '/wc-push-notifications/push-tokens' );
-		$request->set_param( 'token', str_repeat( 'a', 32 ) ); // Only 32 characters instead of 64.
+		$request->set_param( 'token', str_repeat( 'a', 32 ) );
+		// Only 32 characters instead of 64.
 		$request->set_param( 'platform', PushToken::PLATFORM_APPLE );
 		$request->set_param( 'device_uuid', 'test-device-uuid-short' );
 		$request->set_param( 'origin', PushToken::ORIGIN_WOOCOMMERCE_IOS );
@@ -1506,10 +1507,10 @@ class PushTokenRestControllerTest extends WC_Unit_Test_Case {
 		$token_data = $response->get_data()['tokens'][0];
 		$post       = get_post( $push_token->get_id() );
 
-		$this->assertArrayHasKey( 'created_at', $token_data );
-		$this->assertArrayHasKey( 'updated_at', $token_data );
-		$this->assertSame( mysql_to_rfc3339( $post->post_date_gmt ), $token_data['created_at'] );
-		$this->assertSame( mysql_to_rfc3339( $post->post_modified_gmt ), $token_data['updated_at'] );
+		$this->assertArrayHasKey( 'created_at_gmt', $token_data );
+		$this->assertArrayHasKey( 'updated_at_gmt', $token_data );
+		$this->assertSame( gmdate( DATE_RFC3339, strtotime( $post->post_date_gmt . ' UTC' ) ), $token_data['created_at_gmt'] );
+		$this->assertSame( gmdate( DATE_RFC3339, strtotime( $post->post_modified_gmt . ' UTC' ) ), $token_data['updated_at_gmt'] );
 	}
 
 	/**

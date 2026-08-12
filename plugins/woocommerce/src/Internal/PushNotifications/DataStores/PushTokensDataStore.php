@@ -135,8 +135,8 @@ class PushTokensDataStore {
 		 * meta: WordPress already maintains them, and `wp_update_post()` bumps
 		 * `post_modified_gmt` whenever the app re-registers a device.
 		 */
-		$push_token->set_created_at( $post->post_date_gmt );
-		$push_token->set_updated_at( $post->post_modified_gmt );
+		$push_token->set_created_at_gmt( $post->post_date_gmt );
+		$push_token->set_updated_at_gmt( $post->post_modified_gmt );
 
 		return $push_token;
 	}

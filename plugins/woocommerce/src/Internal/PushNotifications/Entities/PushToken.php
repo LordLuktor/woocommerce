@@ -7,6 +7,8 @@ namespace Automattic\WooCommerce\Internal\PushNotifications\Entities;
 defined( 'ABSPATH' ) || exit;
 
 use Automattic\WooCommerce\Internal\PushNotifications\Exceptions\PushTokenInvalidDataException;
+use DateTimeImmutable;
+use DateTimeZone;
 use Automattic\WooCommerce\Internal\PushNotifications\Validators\PushTokenValidator;
 
 /**
@@ -143,18 +145,18 @@ class PushToken {
 	private ?array $metadata = null;
 
 	/**
-	 * The date the token was registered, as an RFC3339 string in UTC.
+	 * The date the token was registered, as an RFC3339 string in UTC (offset `+00:00`).
 	 *
 	 * @var string|null
 	 */
-	private ?string $created_at = null;
+	private ?string $created_at_gmt = null;
 
 	/**
-	 * The date the token was last refreshed, as an RFC3339 string in UTC.
+	 * The date the token was last refreshed, as an RFC3339 string in UTC (offset `+00:00`).
 	 *
 	 * @var string|null
 	 */
-	private ?string $updated_at = null;
+	private ?string $updated_at_gmt = null;
 
 	/**
 	 * Creates a new PushToken instance with the given data.
@@ -197,12 +199,12 @@ class PushToken {
 			$this->set_metadata( (array) $data['metadata'] );
 		}
 
-		if ( array_key_exists( 'created_at', $data ) ) {
-			$this->set_created_at( null === $data['created_at'] ? null : (string) $data['created_at'] );
+		if ( array_key_exists( 'created_at_gmt', $data ) ) {
+			$this->set_created_at_gmt( null === $data['created_at_gmt'] ? null : (string) $data['created_at_gmt'] );
 		}
 
-		if ( array_key_exists( 'updated_at', $data ) ) {
-			$this->set_updated_at( null === $data['updated_at'] ? null : (string) $data['updated_at'] );
+		if ( array_key_exists( 'updated_at_gmt', $data ) ) {
+			$this->set_updated_at_gmt( null === $data['updated_at_gmt'] ? null : (string) $data['updated_at_gmt'] );
 		}
 	}
 
@@ -391,35 +393,62 @@ class PushToken {
 	 * post record rather than supplied by an API client, so there is no
 	 * untrusted input to guard against.
 	 *
-	 * @param string|null $created_at A GMT `Y-m-d H:i:s` datetime, or null if unknown.
+	 * @param string|null $created_at_gmt A GMT `Y-m-d H:i:s` datetime, or null if unknown.
 	 * @return void
 	 *
 	 * @since 11.2.0
 	 */
-	public function set_created_at( ?string $created_at ): void {
-		$this->created_at = $this->normalize_gmt_datetime( $created_at );
+	public function set_created_at_gmt( ?string $created_at_gmt ): void {
+		$this->created_at_gmt = $this->normalize_gmt_datetime( $created_at_gmt );
 	}
 
 	/**
 	 * Sets the date the token was last refreshed.
 	 *
-	 * See {@see self::set_created_at()} for why this bypasses validation.
+	 * See {@see self::set_created_at_gmt()} for why this bypasses validation.
 	 *
-	 * @param string|null $updated_at A GMT `Y-m-d H:i:s` datetime, or null if unknown.
+	 * @param string|null $updated_at_gmt A GMT `Y-m-d H:i:s` datetime, or null if unknown.
 	 * @return void
 	 *
 	 * @since 11.2.0
 	 */
-	public function set_updated_at( ?string $updated_at ): void {
-		$this->updated_at = $this->normalize_gmt_datetime( $updated_at );
+	public function set_updated_at_gmt( ?string $updated_at_gmt ): void {
+		$this->updated_at_gmt = $this->normalize_gmt_datetime( $updated_at_gmt );
 	}
 
 	/**
-	 * Converts a GMT `Y-m-d H:i:s` datetime to RFC3339, matching the format the
-	 * WordPress REST API uses for its own `*_gmt` fields.
+	 * Converts a GMT `Y-m-d H:i:s` datetime to an RFC3339 string carrying an
+	 * explicit `+00:00` offset.
 	 *
-	 * Empty values and the MySQL zero date normalize to null so consumers can
-	 * tell "we don't know when this happened" apart from a real date.
+	 * Deliberately not `mysql_to_rfc3339()`, despite the name that function
+	 * carries. It strips the timezone, which core's own docblock notes means
+	 * the output "does not conform to RFC3339 format, which must contain
+	 * timezone". A consumer calling `new Date()` on an offset-less string gets
+	 * it parsed as local time, so a support engineer in UTC+10 would read a
+	 * token registered five minutes ago as ten hours away.
+	 *
+	 * The timezone is also stated rather than inherited. `mysql2date()` builds
+	 * its date in `wp_timezone()`, the store's timezone, and only avoids
+	 * shifting the value because its format string performs no conversion. A UK
+	 * store would report times an hour out through BST if that ever changed.
+	 * Every value reaching this method is GMT by construction, from
+	 * `post_date_gmt`, `post_modified_gmt`, or `gmdate()`, so parsing as UTC is
+	 * correct and does not depend on a site setting.
+	 *
+	 * The format is matched exactly rather than sniffed, because the permissive
+	 * parsers accept input this method's contract does not allow:
+	 *
+	 *     '0000-00-00 00:00:00'       => rejected here, else year -0001
+	 *     ''                          => rejected here, else the current time
+	 *     '2026-02-30 09:30:00'       => rejected, else silently 2026-03-02
+	 *     '2026-08-01T09:30:00+05:00' => rejected, else read as +05:00
+	 *
+	 * The last two are why `createFromFormat()` and the warning check are both
+	 * needed. An offset in the input overrides the timezone argument, so a
+	 * value written in local time would be read as local time rather than
+	 * flagged, and an impossible date rolls forward into a plausible one.
+	 * `createFromFormat()` rejects the offset outright, and the warning check
+	 * catches the rollover, which it performs but reports.
 	 *
 	 * @param string|null $datetime The GMT datetime string.
 	 * @return string|null
@@ -433,7 +462,20 @@ class PushToken {
 			return null;
 		}
 
-		return mysql_to_rfc3339( $datetime );
+		// The leading `!` resets the fields the format does not set, so a short
+		// match cannot silently inherit today's date.
+		$parsed = DateTimeImmutable::createFromFormat( '!Y-m-d H:i:s', $datetime, new DateTimeZone( 'UTC' ) );
+		$errors = DateTimeImmutable::getLastErrors();
+
+		// Returns false rather than throwing on a value it cannot match.
+		// Returning that straight out would be a TypeError against this
+		// method's ?string return, and TypeError extends Error, so no caller's
+		// catch block on the send path would stop it becoming a fatal.
+		if ( false === $parsed || ( $errors && ( $errors['warning_count'] || $errors['error_count'] ) ) ) {
+			return null;
+		}
+
+		return $parsed->format( DATE_RFC3339 );
 	}
 
 	/**
@@ -525,25 +567,25 @@ class PushToken {
 	}
 
 	/**
-	 * Gets the date the token was registered, as an RFC3339 string in UTC.
+	 * Gets the date the token was registered, as an RFC3339 string in UTC (offset `+00:00`).
 	 *
 	 * @return string|null
 	 *
 	 * @since 11.2.0
 	 */
-	public function get_created_at(): ?string {
-		return $this->created_at;
+	public function get_created_at_gmt(): ?string {
+		return $this->created_at_gmt;
 	}
 
 	/**
-	 * Gets the date the token was last refreshed, as an RFC3339 string in UTC.
+	 * Gets the date the token was last refreshed, as an RFC3339 string in UTC (offset `+00:00`).
 	 *
 	 * @return string|null
 	 *
 	 * @since 11.2.0
 	 */
-	public function get_updated_at(): ?string {
-		return $this->updated_at;
+	public function get_updated_at_gmt(): ?string {
+		return $this->updated_at_gmt;
 	}
 
 	/**
@@ -576,7 +618,7 @@ class PushToken {
 	 * same physical device across different users, and `platform` and
 	 * `metadata` supply the app, OS and version a device is identified by.
 	 *
-	 * @return array{user_id: int|null, token: string|null, origin: string|null, device_locale: string|null, id: int|null, device_uuid: string|null, platform: string|null, metadata: array, created_at: string|null, updated_at: string|null}
+	 * @return array{user_id: int|null, token: string|null, origin: string|null, device_locale: string|null, id: int|null, device_uuid: string|null, platform: string|null, metadata: array, created_at_gmt: string|null, updated_at_gmt: string|null}
 	 *
 	 * @since 11.2.0
 	 */
@@ -584,12 +626,12 @@ class PushToken {
 		return array_merge(
 			$this->to_wpcom_format(),
 			array(
-				'id'          => $this->id,
-				'device_uuid' => $this->device_uuid,
-				'platform'    => $this->platform,
-				'metadata'    => $this->metadata ?? array(),
-				'created_at'  => $this->created_at,
-				'updated_at'  => $this->updated_at,
+				'id'             => $this->id,
+				'device_uuid'    => $this->device_uuid,
+				'platform'       => $this->platform,
+				'metadata'       => $this->metadata ?? array(),
+				'created_at_gmt' => $this->created_at_gmt,
+				'updated_at_gmt' => $this->updated_at_gmt,
 			)
 		);
 	}

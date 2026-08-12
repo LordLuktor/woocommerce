@@ -765,13 +765,89 @@ class PushTokenTest extends WC_Unit_Test_Case {
 	public function test_it_converts_gmt_datetimes_to_rfc3339() {
 		$push_token = new PushToken(
 			array(
-				'created_at' => '2026-08-01 09:30:00',
-				'updated_at' => '2026-08-11 14:45:12',
+				'created_at_gmt' => '2026-08-01 09:30:00',
+				'updated_at_gmt' => '2026-08-11 14:45:12',
 			)
 		);
 
-		$this->assertSame( '2026-08-01T09:30:00', $push_token->get_created_at() );
-		$this->assertSame( '2026-08-11T14:45:12', $push_token->get_updated_at() );
+		$this->assertSame( '2026-08-01T09:30:00+00:00', $push_token->get_created_at_gmt() );
+		$this->assertSame( '2026-08-11T14:45:12+00:00', $push_token->get_updated_at_gmt() );
+	}
+
+	/**
+	 * @testdox Tests timestamps carry an explicit UTC offset.
+	 *
+	 * A consumer calling `new Date()` on a string with no offset parses it as
+	 * local time, so a viewer in UTC+10 would read a value ten hours out.
+	 */
+	public function test_it_emits_timestamps_with_an_explicit_utc_offset() {
+		$push_token = new PushToken( array( 'created_at_gmt' => '2026-08-01 09:30:00' ) );
+
+		$this->assertStringEndsWith( '+00:00', (string) $push_token->get_created_at_gmt() );
+	}
+
+	/**
+	 * @testdox Tests an unparseable stored value normalizes to null rather than fataling.
+	 *
+	 * The parse returns false on input it cannot match, and returning that from
+	 * a `?string` method under strict types raises a TypeError. TypeError
+	 * extends Error, so no catch block on the send path would stop it becoming
+	 * a fatal.
+	 */
+	public function test_it_normalizes_an_unparseable_timestamp_to_null() {
+		$push_token = new PushToken( array( 'created_at_gmt' => 'not a date at all' ) );
+
+		$this->assertNull( $push_token->get_created_at_gmt() );
+	}
+
+	/**
+	 * @testdox Tests timestamps are read as UTC regardless of the store's timezone.
+	 *
+	 * Stored values are GMT by construction. Parsing them in the site timezone
+	 * would shift every value by the store's offset, which on a UK store would
+	 * appear only during BST.
+	 */
+	public function test_it_parses_timestamps_as_utc_not_the_site_timezone() {
+		$original = get_option( 'timezone_string' );
+		update_option( 'timezone_string', 'Europe/London' );
+
+		$push_token = new PushToken( array( 'created_at_gmt' => '2026-08-01 09:30:00' ) );
+
+		update_option( 'timezone_string', $original );
+
+		$this->assertSame( '2026-08-01T09:30:00+00:00', $push_token->get_created_at_gmt() );
+	}
+
+	/**
+	 * @testdox Tests an impossible calendar date is rejected rather than rolled forward.
+	 *
+	 * PHP's date parsers accept 30 February and silently return 2 March. A
+	 * rolled-forward date is worse than no date, because it looks plausible and
+	 * nothing downstream can tell it was invented.
+	 */
+	public function test_it_rejects_an_impossible_calendar_date() {
+		$push_token = new PushToken( array( 'created_at_gmt' => '2026-02-30 09:30:00' ) );
+
+		$this->assertNull( $push_token->get_created_at_gmt() );
+	}
+
+	/**
+	 * @testdox Tests a timestamp carrying its own offset is rejected.
+	 *
+	 * These fields are documented as GMT `Y-m-d H:i:s`. An offset in the input
+	 * overrides the timezone the parser is given, so a value written in local
+	 * time would be read as local time and reported as a different instant
+	 * rather than refused.
+	 */
+	public function test_it_rejects_a_timestamp_carrying_its_own_offset() {
+		foreach ( array( '2026-08-01T09:30:00+05:00', '2026-08-01 09:30:00 UTC', '2026-08-01T09:30:00Z' ) as $stored ) {
+			$push_token = new PushToken( array( 'created_at_gmt' => $stored ) );
+
+			$this->assertNull(
+				$push_token->get_created_at_gmt(),
+				sprintf( 'Expected null for stored value "%s".', $stored )
+			);
+		}
 	}
 
 	/**
@@ -781,21 +857,21 @@ class PushTokenTest extends WC_Unit_Test_Case {
 	 * this happened", and must not be surfaced as if they were real dates.
 	 */
 	public function test_it_normalizes_unknown_timestamps_to_null() {
-		$this->assertNull( ( new PushToken() )->get_created_at() );
-		$this->assertNull( ( new PushToken() )->get_updated_at() );
+		$this->assertNull( ( new PushToken() )->get_created_at_gmt() );
+		$this->assertNull( ( new PushToken() )->get_updated_at_gmt() );
 
 		$push_token = new PushToken(
 			array(
-				'created_at' => '0000-00-00 00:00:00',
-				'updated_at' => '',
+				'created_at_gmt' => '0000-00-00 00:00:00',
+				'updated_at_gmt' => '',
 			)
 		);
 
-		$this->assertNull( $push_token->get_created_at() );
-		$this->assertNull( $push_token->get_updated_at() );
+		$this->assertNull( $push_token->get_created_at_gmt() );
+		$this->assertNull( $push_token->get_updated_at_gmt() );
 
-		$push_token->set_created_at( null );
-		$this->assertNull( $push_token->get_created_at() );
+		$push_token->set_created_at_gmt( null );
+		$this->assertNull( $push_token->get_created_at_gmt() );
 	}
 
 	/**
@@ -807,16 +883,16 @@ class PushTokenTest extends WC_Unit_Test_Case {
 	public function test_rest_format_adds_fields_without_changing_wpcom_format() {
 		$push_token = new PushToken(
 			array(
-				'id'            => 77,
-				'user_id'       => 42,
-				'token'         => 'rest_format_token',
-				'platform'      => PushToken::PLATFORM_APPLE,
-				'device_uuid'   => 'rest-format-uuid',
-				'origin'        => PushToken::ORIGIN_WOOCOMMERCE_IOS,
-				'device_locale' => 'en_US',
-				'metadata'      => array( 'app_version' => '21.1' ),
-				'created_at'    => '2026-08-01 09:30:00',
-				'updated_at'    => '2026-08-11 14:45:12',
+				'id'             => 77,
+				'user_id'        => 42,
+				'token'          => 'rest_format_token',
+				'platform'       => PushToken::PLATFORM_APPLE,
+				'device_uuid'    => 'rest-format-uuid',
+				'origin'         => PushToken::ORIGIN_WOOCOMMERCE_IOS,
+				'device_locale'  => 'en_US',
+				'metadata'       => array( 'app_version' => '21.1' ),
+				'created_at_gmt' => '2026-08-01 09:30:00',
+				'updated_at_gmt' => '2026-08-11 14:45:12',
 			)
 		);
 
@@ -832,8 +908,8 @@ class PushTokenTest extends WC_Unit_Test_Case {
 		$this->assertSame( 'rest-format-uuid', $rest_format['device_uuid'] );
 		$this->assertSame( PushToken::PLATFORM_APPLE, $rest_format['platform'] );
 		$this->assertSame( array( 'app_version' => '21.1' ), $rest_format['metadata'] );
-		$this->assertSame( '2026-08-01T09:30:00', $rest_format['created_at'] );
-		$this->assertSame( '2026-08-11T14:45:12', $rest_format['updated_at'] );
+		$this->assertSame( '2026-08-01T09:30:00+00:00', $rest_format['created_at_gmt'] );
+		$this->assertSame( '2026-08-11T14:45:12+00:00', $rest_format['updated_at_gmt'] );
 		$this->assertSame( $wpcom_format, array_intersect_key( $rest_format, $wpcom_format ) );
 	}
 
