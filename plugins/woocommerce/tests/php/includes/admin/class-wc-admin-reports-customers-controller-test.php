@@ -122,6 +122,17 @@ class WC_Admin_Reports_Customers_Controller_Test extends WC_Unit_Test_Case {
 			$order->set_billing_state( $customer->get_billing_state() );
 			$order->set_billing_country( $customer->get_billing_country() );
 			$order->save();
+
+			if ( 0 === $index ) {
+				$refund = wc_create_refund(
+					array(
+						'order_id'   => $order->get_id(),
+						'amount'     => 20,
+						'line_items' => array(),
+					)
+				);
+				self::assertInstanceOf( WC_Order_Refund::class, $refund );
+			}
 		}
 
 		// Create guest orders (no user_id) with different locations.
@@ -240,6 +251,53 @@ class WC_Admin_Reports_Customers_Controller_Test extends WC_Unit_Test_Case {
 		wp_set_current_user( 0 );
 		$response = $this->server->dispatch( new WP_REST_Request( 'GET', $this->endpoint ) );
 		$this->assertEquals( 401, $response->get_status() );
+	}
+
+	/**
+	 * @testdox Partially refunded orders count once in numeric filters.
+	 */
+	public function test_partially_refunded_orders_count_once_in_numeric_filters(): void {
+		$customer_id = CustomersDataStore::get_customer_id_by_user_id( self::$registered_customers[0]->get_id() );
+		$request     = new WP_REST_Request( 'GET', $this->endpoint );
+		$request->set_query_params(
+			array(
+				'customers'        => array( $customer_id ),
+				'orders_count_min' => 1,
+				'orders_count_max' => 1,
+			)
+		);
+
+		$response = $this->server->dispatch( $request );
+		$reports  = $response->get_data();
+
+		$this->assertEquals( 200, $response->get_status() );
+		$this->assertCount( 1, $reports, 'A refund row should not count as another order.' );
+		$this->assertSame( 1, $reports[0]['orders_count'] );
+	}
+
+	/**
+	 * @testdox Partially refunded orders use the parent order count in average order value filters.
+	 */
+	public function test_partially_refunded_orders_use_parent_count_in_average_order_value_filters(): void {
+		$customer_id = CustomersDataStore::get_customer_id_by_user_id( self::$registered_customers[0]->get_id() );
+		$request     = new WP_REST_Request( 'GET', $this->endpoint );
+		$request->set_query_params(
+			array(
+				'customers'           => array( $customer_id ),
+				'avg_order_value_min' => 79,
+				'avg_order_value_max' => 81,
+				'total_spend_min'     => 79,
+				'total_spend_max'     => 81,
+			)
+		);
+
+		$response = $this->server->dispatch( $request );
+		$reports  = $response->get_data();
+
+		$this->assertEquals( 200, $response->get_status() );
+		$this->assertCount( 1, $reports, 'A refund row should not lower the average order value denominator.' );
+		$this->assertEqualsWithDelta( 80.0, $reports[0]['total_spend'], 0.001 );
+		$this->assertEqualsWithDelta( 80.0, $reports[0]['avg_order_value'], 0.001 );
 	}
 
 	/**

@@ -459,9 +459,11 @@ class DataStore extends ReportsDataStore implements DataStoreInterface {
 			$where_clauses[] = "{$customer_lookup_table}.user_id IS " . ( 'registered' === $user_type ? 'NOT NULL' : 'NULL' );
 		}
 
-		$numeric_params = array(
+		$orders_count    = 'SUM( CASE WHEN parent_id = 0 THEN 1 ELSE 0 END )';
+		$avg_order_value = "CASE WHEN {$orders_count} = 0 THEN NULL ELSE SUM( total_sales ) / {$orders_count} END";
+		$numeric_params  = array(
 			'orders_count'    => array(
-				'column' => 'COUNT( order_id )',
+				'column' => $orders_count,
 				'format' => '%d',
 			),
 			'total_spend'     => array(
@@ -469,7 +471,7 @@ class DataStore extends ReportsDataStore implements DataStoreInterface {
 				'format' => '%f',
 			),
 			'avg_order_value' => array(
-				'column' => '( SUM( total_sales ) / COUNT( order_id ) )',
+				'column' => $avg_order_value,
 				'format' => '%f',
 			),
 		);
