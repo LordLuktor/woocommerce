@@ -102,7 +102,7 @@ class DataStore extends ReportsDataStore implements DataStoreInterface {
 	 * Parented rows use the authoritative order type because legacy refund stats can have a non-null
 	 * returning_customer value.
 	 *
-	 * @since 11.1.0
+	 * @since 11.2.0
 	 *
 	 * @param string $order_stats_table Fully qualified order stats table name.
 	 * @return string

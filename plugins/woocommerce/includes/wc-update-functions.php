@@ -3625,10 +3625,10 @@ function wc_update_1110_flush_product_count_cache() {
 /**
  * Invalidate cached Analytics reports after changing customer aggregate semantics.
  *
- * @since 11.1.0
+ * @since 11.2.0
  *
  * @return void
  */
-function wc_update_11101_invalidate_analytics_reports_cache(): void {
+function wc_update_1120_invalidate_analytics_reports_cache(): void {
 	ReportsCache::invalidate();
 }
