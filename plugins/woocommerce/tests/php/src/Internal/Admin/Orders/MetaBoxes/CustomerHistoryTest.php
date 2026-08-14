@@ -613,8 +613,6 @@ class CustomerHistoryTest extends WC_Unit_Test_Case {
 		$this->use_cpt_orders();
 		$this->assertFalse( OrderUtil::custom_orders_table_usage_is_enabled(), 'Test should use CPT order storage.' );
 
-		\WC_Helper_Reports::reset_stats_dbs();
-
 		$order = WC_Helper_Order::create_order( 0 );
 		$order->set_billing_first_name( 'Guest' );
 		$order->set_billing_last_name( 'Customer' );
@@ -622,6 +620,9 @@ class CustomerHistoryTest extends WC_Unit_Test_Case {
 		$order->set_status( 'completed' );
 		$order->set_total( 100 );
 		$order->save();
+
+		$this->assertSame( '', $order->get_billing_email( 'edit' ), 'Test order should not have a billing email.' );
+		\WC_Helper_Reports::reset_stats_dbs();
 
 		ob_start();
 		try {
