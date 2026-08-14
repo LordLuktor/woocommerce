@@ -70,7 +70,9 @@ class DataStore extends ReportsDataStore implements DataStoreInterface {
 	protected function assign_report_columns() {
 		global $wpdb;
 		$table_name           = self::get_db_table_name();
-		$orders_count         = 'SUM( CASE WHEN parent_id = 0 THEN 1 ELSE 0 END )';
+		$order_stats_table    = $wpdb->prefix . 'wc_order_stats';
+		$countable_order      = static::get_countable_customer_order_predicate( $order_stats_table );
+		$orders_count         = "SUM( CASE WHEN {$countable_order} THEN 1 ELSE 0 END )";
 		$total_spend          = 'SUM( total_sales )';
 		$this->report_columns = array(
 			'id'               => "{$table_name}.customer_id as id",
@@ -92,6 +94,30 @@ class DataStore extends ReportsDataStore implements DataStoreInterface {
 			'total_spend'      => "{$total_spend} as total_spend",
 			'avg_order_value'  => "CASE WHEN {$orders_count} = 0 THEN NULL ELSE {$total_spend} / {$orders_count} END AS avg_order_value",
 		);
+	}
+
+	/**
+	 * Get the SQL predicate that includes orders while excluding refund rows.
+	 *
+	 * Parented rows use the authoritative order type because legacy refund stats can have a non-null
+	 * returning_customer value.
+	 *
+	 * @since 11.1.0
+	 *
+	 * @param string $order_stats_table Fully qualified order stats table name.
+	 * @return string
+	 */
+	protected static function get_countable_customer_order_predicate( $order_stats_table ) {
+		$orders_table      = OrderUtil::get_table_for_orders();
+		$hpos_enabled      = OrderUtil::custom_orders_table_usage_is_enabled();
+		$order_id_column   = $hpos_enabled ? 'id' : 'ID';
+		$order_type_column = $hpos_enabled ? 'type' : 'post_type';
+
+		$source_order_exists  = "EXISTS ( SELECT 1 FROM {$orders_table} AS countable_customer_order";
+		$source_order_exists .= " WHERE countable_customer_order.{$order_id_column} = {$order_stats_table}.order_id";
+		$source_order_exists .= " AND countable_customer_order.{$order_type_column} = 'shop_order' )";
+
+		return "( CASE WHEN {$order_stats_table}.parent_id = 0 THEN 1 WHEN {$order_stats_table}.parent_id IS NULL THEN 0 ELSE {$source_order_exists} END )";
 	}
 
 	/**
@@ -459,7 +485,8 @@ class DataStore extends ReportsDataStore implements DataStoreInterface {
 			$where_clauses[] = "{$customer_lookup_table}.user_id IS " . ( 'registered' === $user_type ? 'NOT NULL' : 'NULL' );
 		}
 
-		$orders_count    = 'SUM( CASE WHEN parent_id = 0 THEN 1 ELSE 0 END )';
+		$countable_order = static::get_countable_customer_order_predicate( $order_stats_table_name );
+		$orders_count    = "SUM( CASE WHEN {$countable_order} THEN 1 ELSE 0 END )";
 		$avg_order_value = "CASE WHEN {$orders_count} = 0 THEN NULL ELSE SUM( total_sales ) / {$orders_count} END";
 		$numeric_params  = array(
 			'orders_count'    => array(
@@ -870,10 +897,9 @@ class DataStore extends ReportsDataStore implements DataStoreInterface {
 	 * Retrieve the oldest orders made by a customer.
 	 *
 	 * Refunds share the customer of the order they refund, but they are not orders of that
-	 * customer and must not be returned here. They are the only rows written with a NULL
-	 * returning_customer, and they always carry the ID of the refunded order in parent_id;
-	 * both are required so that an order given a parent through set_parent_id() keeps
-	 * counting as one of the customer's orders.
+	 * customer and must not be returned here. Parented rows use the authoritative order type
+	 * so that legacy refund stats remain excluded while an order given a parent through
+	 * set_parent_id() keeps counting as one of the customer's orders.
 	 *
 	 * @param int $customer_id Customer ID.
 	 * @return array Orders.
@@ -881,6 +907,7 @@ class DataStore extends ReportsDataStore implements DataStoreInterface {
 	public static function get_oldest_orders( $customer_id ) {
 		global $wpdb;
 		$orders_table                = $wpdb->prefix . 'wc_order_stats';
+		$countable_order             = static::get_countable_customer_order_predicate( $orders_table );
 		$excluded_statuses           = array_map( array( __CLASS__, 'normalize_order_status' ), self::get_excluded_report_order_statuses() );
 		$excluded_statuses_condition = '';
 		if ( ! empty( $excluded_statuses ) ) {
@@ -891,7 +918,7 @@ class DataStore extends ReportsDataStore implements DataStoreInterface {
 		return $wpdb->get_results(
 			$wpdb->prepare(
 				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-				"SELECT order_id, date_created FROM {$orders_table} WHERE customer_id = %d AND ( parent_id = 0 OR returning_customer IS NOT NULL ) {$excluded_statuses_condition} ORDER BY date_created, order_id ASC LIMIT 2",
+				"SELECT order_id, date_created FROM {$orders_table} WHERE customer_id = %d AND {$countable_order} {$excluded_statuses_condition} ORDER BY date_created, order_id ASC LIMIT 2",
 				$customer_id
 			)
 		);

@@ -18,6 +18,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
+use Automattic\WooCommerce\Admin\API\Reports\Cache as ReportsCache;
 use Automattic\WooCommerce\Admin\Notes\Note;
 use Automattic\WooCommerce\Admin\Notes\Notes;
 use Automattic\WooCommerce\Database\Migrations\MigrationHelper;
@@ -3619,4 +3620,15 @@ function wc_update_1110_flush_product_count_cache() {
 	if ( class_exists( \Automattic\WooCommerce\Caches\ProductCountCache::class ) ) {
 		( new \Automattic\WooCommerce\Caches\ProductCountCache() )->flush( 'product' );
 	}
+}
+
+/**
+ * Invalidate cached Analytics reports after changing customer aggregate semantics.
+ *
+ * @since 11.1.0
+ *
+ * @return void
+ */
+function wc_update_11101_invalidate_analytics_reports_cache(): void {
+	ReportsCache::invalidate();
 }

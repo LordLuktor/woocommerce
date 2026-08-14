@@ -5,6 +5,7 @@
  * @package WooCommerce\Tests\Functions.
  */
 
+use Automattic\WooCommerce\Admin\API\Reports\Cache as ReportsCache;
 use Automattic\WooCommerce\Blocks\Options as BlockOptions;
 use Automattic\WooCommerce\Blocks\Utils\BlockTemplateUtils;
 
@@ -354,5 +355,26 @@ class WC_Update_Functions_Test extends \WC_Unit_Test_Case {
 
 		wc_update_1110_delete_dashboard_outofstock_count_transient();
 		$this->assertFalse( get_transient( 'wc_outofstock_count' ) );
+	}
+
+	/**
+	 * @testdox Migration registers and invalidates cached Analytics reports.
+	 */
+	public function test_wc_update_11101_invalidate_analytics_reports_cache(): void {
+		include_once WC_ABSPATH . 'includes/wc-update-functions.php';
+
+		$db_updates = WC_Install::get_db_update_callbacks();
+		$this->assertArrayHasKey( '11.1.0-1', $db_updates );
+		$this->assertContains( 'wc_update_11101_invalidate_analytics_reports_cache', $db_updates['11.1.0-1'] );
+
+		$cache_key = 'wc_update_11101_analytics_report';
+		set_transient( ReportsCache::VERSION_OPTION . '-transient-version', 'stale-version' );
+		ReportsCache::set( $cache_key, 'stale-value' );
+		$this->assertSame( 'stale-value', ReportsCache::get( $cache_key ) );
+
+		wc_update_11101_invalidate_analytics_reports_cache();
+		$this->assertFalse( ReportsCache::get( $cache_key ) );
+
+		delete_transient( $cache_key );
 	}
 }
