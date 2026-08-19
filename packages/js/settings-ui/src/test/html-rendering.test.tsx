@@ -19,7 +19,7 @@ jest.mock( '@wordpress/admin-ui', () => ( {
 /**
  * Internal dependencies
  */
-import { SettingsUIPage } from '../settings-ui-page';
+import { SettingsUIErrorBoundary, SettingsUIPage } from '../settings-ui-page';
 import { __resetRegistry, registerSettingsExtension } from '../registry';
 import type { SettingsUISchema } from '../types';
 
@@ -101,6 +101,7 @@ const expectUnsafeMarkupRemoved = ( container: HTMLElement ) => {
 describe( 'settings HTML rendering', () => {
 	afterEach( () => {
 		__resetRegistry();
+		jest.restoreAllMocks();
 	} );
 
 	it( 'renders settings as centered sections and cards', () => {
@@ -130,21 +131,12 @@ describe( 'settings HTML rendering', () => {
 			<SettingsUIPage schema={ schema } />
 		);
 
+		expect( container.querySelector( '.wc-settings-ui' ) ).not.toBeNull();
 		expect(
-			container.querySelector( '.wc-settings-ui__section' )
+			container.querySelector( '.dataforms-layouts__wrapper' )
 		).not.toBeNull();
 		expect(
 			container.querySelector( '.wc-settings-ui__section-card' )
-		).not.toBeNull();
-		expect(
-			container.querySelector( '.wc-settings-ui__section-fields' )
-		).not.toBeNull();
-		expect( container.querySelector( '.wc-settings-ui__row' ) ).toBeNull();
-		expect(
-			container.querySelector( '.wc-settings-ui__group-panel' )
-		).toBeNull();
-		expect(
-			container.querySelector( '.wc-settings-ui__group-header' )
 		).toBeNull();
 		expect( container.textContent ).toContain( 'General settings' );
 		expect( container.textContent ).toContain( 'Test field' );
@@ -191,8 +183,8 @@ describe( 'settings HTML rendering', () => {
 		);
 
 		expect( container.textContent ).toContain( 'Default section field' );
-		expect( DefaultSectionField.mock.calls[ 0 ][ 0 ].context.section ).toBe(
-			''
+		expect( DefaultSectionField.mock.calls[ 0 ][ 0 ].field.id ).toBe(
+			'test_field'
 		);
 
 		act( () => root.unmount() );
@@ -305,7 +297,7 @@ describe( 'settings HTML rendering', () => {
 			<SettingsUIPage schema={ schema } />
 		);
 
-		const input = container.querySelector( 'input[type="text"]' );
+		const input = container.querySelector( 'input:not([type="hidden"])' );
 		const link = container.querySelector(
 			'a[href="https://example.com/next"]'
 		);
@@ -383,7 +375,9 @@ describe( 'settings HTML rendering', () => {
 		form.insertBefore( sectionLinks, container );
 
 		try {
-			const input = container.querySelector( 'input[type="text"]' );
+			const input = container.querySelector(
+				'input:not([type="hidden"])'
+			);
 			const link = sectionLinks.querySelector( 'a' );
 
 			expect( input ).toBeInstanceOf( HTMLInputElement );
@@ -451,7 +445,9 @@ describe( 'settings HTML rendering', () => {
 		);
 
 		try {
-			const input = container.querySelector( 'input[type="text"]' );
+			const input = container.querySelector(
+				'input:not([type="hidden"])'
+			);
 			const link = container.querySelector(
 				'a[href="https://example.com/next"]'
 			);
@@ -549,7 +545,7 @@ describe( 'settings HTML rendering', () => {
 			<SettingsUIPage schema={ schema } />
 		);
 
-		const input = container.querySelector( 'input[type="text"]' );
+		const input = container.querySelector( 'input:not([type="hidden"])' );
 		const link = container.querySelector(
 			'a[href="https://example.com/next"]'
 		);
@@ -653,7 +649,7 @@ describe( 'settings HTML rendering', () => {
 			<SettingsUIPage schema={ schema } />
 		);
 
-		const input = container.querySelector( 'input[type="text"]' );
+		const input = container.querySelector( 'input:not([type="hidden"])' );
 		const link = container.querySelector(
 			'a[href="https://example.com/next"]'
 		);
@@ -712,6 +708,112 @@ describe( 'settings HTML rendering', () => {
 		container.remove();
 	} );
 
+	it( 'routes registered control edits into the page values', () => {
+		registerSettingsExtension( {
+			scope: { page: 'test-page' },
+			components: {
+				'test/custom-field': ( { data, field, onChange } ) => (
+					<button
+						onClick={ () =>
+							onChange( { [ field.id ]: 'clicked' } )
+						}
+					>
+						{ `Custom control: ${ String(
+							data[ field.id ] ?? ''
+						) }` }
+					</button>
+				),
+			},
+		} );
+
+		const schema: SettingsUISchema = {
+			id: 'test-page',
+			title: 'Test page',
+			section: 'default',
+			save: { adapter: 'form_post' },
+			groups: {
+				general: {
+					id: 'general',
+					fields: [
+						{
+							id: 'test_field',
+							label: 'Test field',
+							type: 'text',
+							value: 'initial',
+							component: 'test/custom-field',
+						},
+					],
+				},
+			},
+		};
+
+		const { container, form, root } = renderElementInMainForm(
+			<SettingsUIPage schema={ schema } />
+		);
+
+		try {
+			expect( container.textContent ).toContain(
+				'Custom control: initial'
+			);
+
+			act( () => {
+				container.querySelector( 'button' )?.click();
+			} );
+
+			expect( container.textContent ).toContain(
+				'Custom control: clicked'
+			);
+			expect(
+				form.querySelector( 'input[name="test_field"]' )
+			).toHaveAttribute( 'value', 'clicked' );
+		} finally {
+			act( () => root.unmount() );
+			form.remove();
+		}
+	} );
+
+	it( 'fails closed when a declared component is not registered', () => {
+		jest.spyOn( console, 'warn' ).mockImplementation( () => undefined );
+		jest.spyOn( console, 'error' ).mockImplementation( () => undefined );
+
+		const schema: SettingsUISchema = {
+			id: 'test-page',
+			title: 'Test page',
+			section: 'default',
+			save: { adapter: 'form_post' },
+			groups: {
+				general: {
+					id: 'general',
+					fields: [
+						{
+							id: 'test_field',
+							label: 'Test field',
+							type: 'text',
+							component: 'test/missing-component',
+						},
+					],
+				},
+			},
+		};
+
+		const { container, root } = renderElement(
+			<SettingsUIErrorBoundary>
+				<SettingsUIPage schema={ schema } />
+			</SettingsUIErrorBoundary>
+		);
+
+		expect( container.textContent ).toContain(
+			'Something went wrong while rendering this settings page.'
+		);
+		expect( container.querySelector( 'input' ) ).toBeNull();
+		expect(
+			container.querySelector( '.woocommerce-save-button' )
+		).toBeNull();
+
+		act( () => root.unmount() );
+		container.remove();
+	} );
+
 	it( 'sanitizes info fields and group descriptions before rendering', () => {
 		const schema: SettingsUISchema = {
 			id: 'test-page',
@@ -740,7 +842,19 @@ describe( 'settings HTML rendering', () => {
 		);
 
 		expect( container.textContent ).toContain( 'Info field' );
-		expectUnsafeMarkupRemoved( container );
+
+		// The info description keeps sanitized markup; the group description
+		// renders as plain text, so only the info strong tag survives.
+		const strongTexts = Array.from(
+			container.querySelectorAll( 'strong' )
+		).map( ( el ) => el.textContent );
+		expect( strongTexts ).toEqual( [ 'Info field', 'Safe' ] );
+		expect( container.querySelector( 'script' ) ).toBeNull();
+		expect( container.querySelector( 'img' ) ).toBeNull();
+		expect( container.querySelector( 'iframe' ) ).toBeNull();
+		expect( container.innerHTML ).not.toContain( 'onerror' );
+		expect( container.innerHTML ).not.toContain( 'onclick' );
+		expect( container.innerHTML ).not.toContain( 'javascript:' );
 
 		act( () => root.unmount() );
 		container.remove();
