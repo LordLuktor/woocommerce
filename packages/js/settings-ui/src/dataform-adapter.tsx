@@ -14,7 +14,6 @@ import type {
  */
 import { warn } from './diagnostics';
 import { sanitizeSettingsHtml } from './html';
-import { NativeSettingsField } from './native-fields';
 import {
 	resolveFieldComponent,
 	resolveFieldVisibilityPredicate,
@@ -168,26 +167,6 @@ const createIsVisible = (
 		: undefined;
 };
 
-const createInfoRender = (
-	settingsField: SettingsUIField,
-	options: DataFormAdapterOptions
-) => {
-	return function InfoSettingsField( { item }: { item: SettingsValues } ) {
-		return (
-			<NativeSettingsField
-				field={ settingsField }
-				value={ item[ settingsField.id ] ?? null }
-				onChange={ () => undefined }
-				values={ item }
-				initialValues={ options.initialValues }
-				setValue={ () => undefined }
-				setValues={ () => undefined }
-				context={ options.context }
-			/>
-		);
-	};
-};
-
 // Classic settings disable fields through custom_attributes with HTML
 // presence semantics, so any defined value except boolean false disables.
 const isFieldDisabled = ( settingsField: SettingsUIField ) => {
@@ -230,7 +209,7 @@ export const buildDataFormField = (
 	}
 
 	// A field declaring a component requires that custom control. Failing
-	// closed beats silently rendering a native field in its place.
+	// closed beats silently rendering a built-in control in its place.
 	if ( settingsField.component ) {
 		throw new Error(
 			`Component "${ settingsField.component }" is not registered.`
@@ -239,7 +218,8 @@ export const buildDataFormField = (
 
 	if ( settingsField.type === 'info' ) {
 		field.readOnly = true;
-		field.render = createInfoRender( settingsField, options );
+		field.render = ( { field: normalizedField } ) =>
+			normalizedField.description ?? null;
 		return field;
 	}
 
