@@ -319,6 +319,8 @@ jQuery( function ( $ ) {
 			$( document.body )
 				.on( 'wc_backbone_modal_loaded', this.backbone.init )
 				.on( 'wc_backbone_modal_response', this.backbone.response );
+
+			this.bind_invalid_reveal();
 		},
 
 		block: function() {
@@ -709,6 +711,60 @@ jQuery( function ( $ ) {
 			return false;
 		},
 
+		/**
+		 * Reveal the hidden edit inputs of a row whose control fails HTML5
+		 * validation, so the browser can focus the control and show its
+		 * validation message instead of cancelling the submit with an
+		 * "invalid form control is not focusable" console error.
+		 */
+		bind_invalid_reveal: function() {
+			var itemsPanel = document.getElementById( 'woocommerce-order-items' );
+			var form       = itemsPanel ? itemsPanel.closest( 'form' ) : null;
+
+			if ( ! form ) {
+				return;
+			}
+
+			// The 'invalid' event does not bubble; capture is required.
+			form.addEventListener(
+				'invalid',
+				function( event ) {
+					var row = event.target.closest( 'tr' );
+
+					if ( row && ! $( event.target ).is( ':visible' ) ) {
+						$( row ).find( '.view' ).hide();
+						$( row ).find( '.edit' ).show();
+					}
+				},
+				true
+			);
+		},
+
+		/**
+		 * Check the HTML5 validity of the quantity inputs in the items panel,
+		 * revealing and reporting the first invalid one.
+		 *
+		 * @return {boolean} True when every quantity input is valid.
+		 */
+		validate_quantity_inputs: function() {
+			var valid = true;
+
+			$( '#woocommerce-order-items' )
+				.find( 'input.quantity' )
+				.each( function() {
+					if ( ! this.checkValidity() ) {
+						var row = $( this ).closest( 'tr' );
+						row.find( '.view' ).hide();
+						row.find( '.edit' ).show();
+						this.reportValidity();
+						valid = false;
+						return false;
+					}
+				} );
+
+			return valid;
+		},
+
 		edit_item: function() {
 			$( this ).closest( 'tr' ).find( '.view' ).hide();
 			$( this ).closest( 'tr' ).find( '.edit' ).show();
@@ -909,6 +965,10 @@ jQuery( function ( $ ) {
 		},
 
 		save_line_items: function() {
+			if ( ! wc_meta_boxes_order_items.validate_quantity_inputs() ) {
+				return false;
+			}
+
 			var data = {
 				order_id: woocommerce_admin_meta_boxes.post_id,
 				items:    $( 'table.woocommerce_order_items :input[name], .wc-order-totals-items :input[name]' ).serialize(),
@@ -1216,6 +1276,25 @@ jQuery( function ( $ ) {
 				if ( 'wc-modal-add-products' === target ) {
 					$( document.body ).trigger( 'wc-enhanced-select-init' );
 
+					var modal = document.querySelector( '.wc-backbone-modal-add-products' );
+					var okBtn = modal ? modal.querySelector( '#btn-ok' ) : null;
+					var form  = modal ? modal.querySelector( 'form' ) : null;
+
+					if ( okBtn && form ) {
+						var validateModalForm = function( event ) {
+							if ( ! form.checkValidity() ) {
+								form.reportValidity();
+								event.preventDefault();
+								// Native listeners run before the modal's delegated
+								// handlers, so this keeps the modal open.
+								event.stopPropagation();
+							}
+						};
+
+						okBtn.addEventListener( 'click', validateModalForm );
+						okBtn.addEventListener( 'touchstart', validateModalForm );
+					}
+
 					$( this ).on( 'change', '.wc-product-search', function() {
 						if ( ! $( this ).closest( 'tr' ).is( ':last-child' ) ) {
 							return;
@@ -1248,6 +1327,21 @@ jQuery( function ( $ ) {
 						item_table_body = item_table.find( 'tbody' ),
 						rows            = item_table_body.find( 'tr' ),
 						add_items       = [];
+
+					// A bypass path (e.g. the keyboard shortcut) can reach here
+					// without the button listener running; refuse invalid input
+					// rather than sending a bad request.
+					var hasInvalidQty = false;
+					item_table_body.find( 'input[name="item_qty"]' ).each( function() {
+						if ( ! this.checkValidity() ) {
+							hasInvalidQty = true;
+							return false;
+						}
+					} );
+
+					if ( hasInvalidQty ) {
+						return false;
+					}
 
 					$( rows ).each( function() {
 						var item_id = $( this ).find( ':input[name="item_id"]' ).val(),
