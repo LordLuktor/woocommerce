@@ -1195,6 +1195,7 @@ class WC_AJAX {
 			if ( ! empty( $items ) ) {
 				$save_items = array();
 				parse_str( $items, $save_items );
+				wc_get_container()->get( ItemQuantityLimits::class )->validate_posted_item_quantities( $save_items );
 				wc_save_order_items( $order->get_id(), $save_items );
 			}
 
@@ -1541,6 +1542,7 @@ class WC_AJAX {
 			if ( ! empty( $items ) ) {
 				$save_items = array();
 				parse_str( $items, $save_items );
+				wc_get_container()->get( ItemQuantityLimits::class )->validate_posted_item_quantities( $save_items );
 				wc_save_order_items( $order->get_id(), $save_items );
 			}
 
@@ -1680,6 +1682,12 @@ class WC_AJAX {
 			// Parse the jQuery serialized items.
 			$items = array();
 			parse_str( wp_unslash( $_POST['items'] ), $items ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+
+			try {
+				wc_get_container()->get( ItemQuantityLimits::class )->validate_posted_item_quantities( $items );
+			} catch ( Exception $e ) {
+				wp_send_json_error( array( 'error' => $e->getMessage() ) );
+			}
 
 			// Save order items.
 			wc_save_order_items( $order_id, $items );

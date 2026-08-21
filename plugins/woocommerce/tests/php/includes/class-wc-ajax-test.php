@@ -1223,6 +1223,68 @@ class WC_AJAX_Test extends \WP_Ajax_UnitTestCase {
 	}
 
 	/**
+	 * @testdox save_order_items rejects a negative quantity and leaves the stored item untouched.
+	 */
+	public function test_save_order_items_rejects_negative_quantity() {
+		$this->_setRole( 'administrator' );
+
+		$order        = \WC_Helper_Order::create_order();
+		$items        = array_values( $order->get_items() );
+		$item         = $items[0];
+		$item_id      = $item->get_id();
+		$original_qty = $item->get_quantity();
+
+		$_POST['order_id'] = $order->get_id();
+		$_POST['security'] = wp_create_nonce( 'order-item' );
+		$_POST['items']    = http_build_query(
+			array(
+				'order_item_id'  => array( $item_id ),
+				'order_item_qty' => array( $item_id => '-1' ),
+				'line_total'     => array( $item_id => '-10' ),
+				'line_subtotal'  => array( $item_id => '-10' ),
+			)
+		);
+
+		$response = $this->do_ajax( 'woocommerce_save_order_items' );
+
+		$this->assertFalse( $response['success'] );
+		$this->assertStringContainsString( 'must be 0 or higher', $response['data']['error'] );
+
+		$fresh_item = \WC_Order_Factory::get_order_item( $item_id );
+		$this->assertEquals( $original_qty, $fresh_item->get_quantity() );
+	}
+
+	/**
+	 * @testdox save_order_items accepts a valid positive quantity change.
+	 */
+	public function test_save_order_items_accepts_positive_quantity() {
+		$this->_setRole( 'administrator' );
+
+		$order   = \WC_Helper_Order::create_order();
+		$items   = array_values( $order->get_items() );
+		$item    = $items[0];
+		$item_id = $item->get_id();
+
+		$_POST['order_id'] = $order->get_id();
+		$_POST['security'] = wp_create_nonce( 'order-item' );
+		$_POST['items']    = http_build_query(
+			array(
+				'order_item_id'  => array( $item_id ),
+				'order_item_qty' => array( $item_id => '3' ),
+				'line_total'     => array( $item_id => '30' ),
+				'line_subtotal'  => array( $item_id => '30' ),
+			)
+		);
+
+		$response = $this->do_ajax( 'woocommerce_save_order_items' );
+
+		$this->assertTrue( $response['success'] );
+
+		$fresh_item = \WC_Order_Factory::get_order_item( $item_id );
+		$this->assertEquals( 3, $fresh_item->get_quantity() );
+	}
+
+	/**
 	 * Does the 'hard work' of triggering an ajax endpoint and capturing the response.
 	 *
 	 * @param string $ajax_action The action to be triggered.
