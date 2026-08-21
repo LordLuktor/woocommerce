@@ -1168,6 +1168,61 @@ class WC_AJAX_Test extends \WP_Ajax_UnitTestCase {
 	}
 
 	/**
+	 * @testdox add_order_item rejects a negative quantity with a JSON error and adds nothing to the order.
+	 */
+	public function test_add_order_item_rejects_negative_quantity() {
+		$this->_setRole( 'administrator' );
+
+		$product            = \WC_Helper_Product::create_simple_product();
+		$order              = \WC_Helper_Order::create_order();
+		$initial_item_count = count( $order->get_items() );
+
+		$_POST['order_id'] = $order->get_id();
+		$_POST['security'] = wp_create_nonce( 'order-item' );
+		$_POST['data']     = array(
+			array(
+				'id'  => (string) $product->get_id(),
+				'qty' => '-2',
+			),
+		);
+
+		$response = $this->do_ajax( 'woocommerce_add_order_item' );
+
+		$this->assertFalse( $response['success'] );
+		$this->assertStringContainsString( 'must be 0 or higher', $response['data']['error'] );
+
+		$order = wc_get_order( $order->get_id() );
+		$this->assertCount( $initial_item_count, $order->get_items() );
+	}
+
+	/**
+	 * @testdox add_order_item still accepts a positive quantity.
+	 */
+	public function test_add_order_item_accepts_positive_quantity() {
+		$this->_setRole( 'administrator' );
+
+		$product            = \WC_Helper_Product::create_simple_product();
+		$order              = \WC_Helper_Order::create_order();
+		$initial_item_count = count( $order->get_items() );
+
+		$_POST['order_id'] = $order->get_id();
+		$_POST['security'] = wp_create_nonce( 'order-item' );
+		$_POST['data']     = array(
+			array(
+				'id'  => (string) $product->get_id(),
+				'qty' => '2',
+			),
+		);
+
+		$response = $this->do_ajax( 'woocommerce_add_order_item' );
+
+		$this->assertTrue( $response['success'] );
+
+		$order = wc_get_order( $order->get_id() );
+		$this->assertCount( $initial_item_count + 1, $order->get_items() );
+	}
+
+	/**
 	 * Does the 'hard work' of triggering an ajax endpoint and capturing the response.
 	 *
 	 * @param string $ajax_action The action to be triggered.
