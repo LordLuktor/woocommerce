@@ -188,6 +188,21 @@ describe( 'getHiddenInputs', () => {
 			{ name: 'settings[methods][]', value: 'card' },
 			{ name: 'settings[methods][]', value: 'link' },
 		] );
+		expect(
+			getHiddenInputs(
+				formPostField( {
+					type: 'array',
+					save: {
+						adapter: 'form_post',
+						name: 'settings[methods][]',
+					},
+				} ),
+				[ 'card', 'link' ]
+			)
+		).toEqual( [
+			{ name: 'settings[methods][]', value: 'card' },
+			{ name: 'settings[methods][]', value: 'link' },
+		] );
 	} );
 
 	it( 'keeps disabled fields in the form-post entry list', () => {

@@ -18,6 +18,7 @@ import {
 	isNativeSettingsFieldType,
 	NativeSettingsField,
 } from '../native-fields';
+import { toCanonicalNumberValue } from '../values';
 import type {
 	SettingsFieldComponentProps,
 	SettingsUIField,
@@ -516,6 +517,17 @@ describe( 'NativeSettingsField', () => {
 			changeInput( input as HTMLInputElement, '9007199254740992' );
 			expect( onChange ).toHaveBeenLastCalledWith( null );
 		} );
+
+		it( 'rejects decimal values that change during canonicalization', () => {
+			expect( toCanonicalNumberValue( '01.2500e0' ) ).toBe( 1.25 );
+			expect(
+				toCanonicalNumberValue( '0.10000000000000001' )
+			).toBeNull();
+			expect(
+				toCanonicalNumberValue( '1.0000000000000000001' )
+			).toBeNull();
+			expect( toCanonicalNumberValue( '1e-324' ) ).toBeNull();
+		} );
 	} );
 
 	describe( 'integer fields', () => {
@@ -567,6 +579,42 @@ describe( 'NativeSettingsField', () => {
 	} );
 
 	describe( 'datetime-local fields', () => {
+		it.each( [
+			[ 'date', '2026-08-03', '2026-01-01', '2026-12-31', '1' ],
+			[ 'time', '12:30', '09:00', '17:00', '900' ],
+			[
+				'datetime-local',
+				'2026-08-03T12:30',
+				'2026-08-03T09:00',
+				'2026-08-03T17:00',
+				'any',
+			],
+		] )(
+			'passes range attributes to %s inputs',
+			( type, value, min, max, step ) => {
+				const container = render(
+					<NativeSettingsField
+						{ ...makeProps(
+							{
+								id: `wc_test_${ type }`,
+								label: 'Range field',
+								type,
+								customAttributes: { min, max, step },
+							},
+							value
+						) }
+					/>
+				);
+				const input = container.querySelector(
+					`input[type="${ type }"]`
+				);
+
+				expect( input ).toHaveAttribute( 'min', min );
+				expect( input ).toHaveAttribute( 'max', max );
+				expect( input ).toHaveAttribute( 'step', step );
+			}
+		);
+
 		it( 'displays canonical ISO state as local wall time and emits ISO or null', () => {
 			setDateSettings( {
 				...originalDateSettings,

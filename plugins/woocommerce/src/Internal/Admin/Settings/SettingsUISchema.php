@@ -50,11 +50,25 @@ class SettingsUISchema {
 	);
 
 	/**
-	 * Custom attributes that describe a numeric range.
+	 * Field types whose values cross the typed canonicalization boundary.
+	 *
+	 * @var string[]
+	 */
+	private const TYPED_VALUE_FIELD_TYPES = array( 'array', 'checkbox', 'datetime-local', 'integer', 'number' );
+
+	/**
+	 * Custom attributes that describe an input range.
 	 *
 	 * @var string[]
 	 */
 	private const RANGE_ATTRIBUTES = array( 'min', 'max', 'step' );
+
+	/**
+	 * Native temporal field types that accept range attributes.
+	 *
+	 * @var string[]
+	 */
+	private const TEMPORAL_RANGE_FIELD_TYPES = array( 'date', 'datetime-local', 'time' );
 
 	/**
 	 * Largest integer JavaScript can represent exactly.
@@ -426,8 +440,9 @@ class SettingsUISchema {
 			return $schema;
 		}
 
-		$converted_fields = array();
-		$original_values  = array();
+		$converted_fields                   = array();
+		$fields_requiring_form_preservation = array();
+		$original_values                    = array();
 
 		foreach ( $schema['groups'] as &$group ) {
 			if ( ! is_array( $group ) || ! isset( $group['fields'] ) || ! is_array( $group['fields'] ) ) {
@@ -458,15 +473,23 @@ class SettingsUISchema {
 					continue;
 				}
 
-				if ( self::canonicalize_field( $field, $legacy_derived ) ) {
+				$typed_conversion = self::canonicalize_field( $field, $legacy_derived );
+				if ( $typed_conversion ) {
 					$converted_fields[] = $field['id'];
+				}
+
+				$original_value_changed = array_key_exists( $field['id'], $original_values )
+					&& array_key_exists( 'value', $field )
+					&& $original_values[ $field['id'] ] !== $field['value'];
+				if ( $typed_conversion || ( $original_value_changed && in_array( $field['type'], self::TYPED_VALUE_FIELD_TYPES, true ) ) ) {
+					$fields_requiring_form_preservation[ $field['id'] ] = true;
 				}
 			}
 			unset( $field );
 		}
 		unset( $group );
 
-		self::preserve_converted_form_values( $schema, $original_values );
+		self::preserve_converted_form_values( $schema, $original_values, $fields_requiring_form_preservation );
 
 		if ( ! $legacy_derived ) {
 			self::emit_conversion_notice(
@@ -666,8 +689,14 @@ class SettingsUISchema {
 			throw self::invalid_schema( sprintf( 'Field "%1$s" %2$s must be a finite number.', $field_id, $property ) );
 		}
 
-		$number = (float) trim( $value );
-		if ( ! is_finite( $number ) || ( 0.0 === $number && ! self::decimal_string_is_zero( trim( $value ) ) ) ) {
+		$number         = (float) trim( $value );
+		$encoded_number = wp_json_encode( $number, JSON_PRESERVE_ZERO_FRACTION );
+		if (
+			! is_finite( $number ) ||
+			( 0.0 === $number && ! self::decimal_string_is_zero( trim( $value ) ) ) ||
+			! is_string( $encoded_number ) ||
+			! self::decimal_strings_represent_same_value( trim( $value ), $encoded_number )
+		) {
 			throw self::invalid_schema( sprintf( 'Field "%1$s" %2$s cannot be represented as a finite number without loss.', $field_id, $property ) );
 		}
 
@@ -800,6 +829,52 @@ class SettingsUISchema {
 	}
 
 	/**
+	 * Whether two decimal strings represent the same normalized value.
+	 *
+	 * @param string $left Left decimal value.
+	 * @param string $right Right decimal value.
+	 * @return bool
+	 */
+	private static function decimal_strings_represent_same_value( string $left, string $right ): bool {
+		$normalized_left  = self::normalize_decimal_string( $left );
+		$normalized_right = self::normalize_decimal_string( $right );
+
+		return null !== $normalized_left && $normalized_left === $normalized_right;
+	}
+
+	/**
+	 * Normalize a decimal string to its significant digits and base-ten power.
+	 *
+	 * @param string $value Decimal value.
+	 * @return array{string, int}|null Normalized signed digits and power, or null when invalid.
+	 */
+	private static function normalize_decimal_string( string $value ): ?array {
+		if ( ! preg_match( '/^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/', $value, $matches ) ) {
+			return null;
+		}
+
+		$whole    = $matches[2] ?? '';
+		$fraction = '' !== ( $matches[3] ?? '' ) ? $matches[3] : ( $matches[4] ?? '' );
+		$digits   = ltrim( $whole . $fraction, '0' );
+		if ( '' === $digits ) {
+			return array( '0', 0 );
+		}
+
+		$exponent        = $matches[5] ?? '0';
+		$exponent_digits = ltrim( $exponent, '+-0' );
+		if ( 6 < strlen( $exponent_digits ) ) {
+			return null;
+		}
+
+		$power          = (int) $exponent - strlen( $fraction );
+		$trimmed_digits = rtrim( $digits, '0' );
+		$power         += strlen( $digits ) - strlen( $trimmed_digits );
+		$signed_digits  = '-' === $matches[1] ? '-' . $trimmed_digits : $trimmed_digits;
+
+		return array( $signed_digits, $power );
+	}
+
+	/**
 	 * Canonicalize numeric validation and mirror it to legacy attributes.
 	 *
 	 * @param array $field Field definition.
@@ -905,11 +980,12 @@ class SettingsUISchema {
 	/**
 	 * Preserve valid pre-conversion form values for changed fields.
 	 *
-	 * @param array $schema Canonical schema.
-	 * @param array $original_values Original values keyed by field id.
+	 * @param array               $schema Canonical schema.
+	 * @param array               $original_values Original values keyed by field id.
+	 * @param array<string, bool> $fields_requiring_preservation Fields changed by typed canonicalization.
 	 * @throws \InvalidArgumentException When a converted value has no safe form representation.
 	 */
-	private static function preserve_converted_form_values( array &$schema, array $original_values ): void {
+	private static function preserve_converted_form_values( array &$schema, array $original_values, array $fields_requiring_preservation ): void {
 		$page_save_adapter = isset( $schema['save'] ) && is_array( $schema['save'] ) ? ( $schema['save']['adapter'] ?? 'form_post' ) : 'form_post';
 		if ( 'form_post' !== $page_save_adapter ) {
 			return;
@@ -921,7 +997,12 @@ class SettingsUISchema {
 			}
 
 			foreach ( $group['fields'] as &$field ) {
-				if ( ! is_array( $field ) || ! isset( $field['id'] ) || ! array_key_exists( $field['id'], $original_values ) ) {
+				if (
+					! is_array( $field ) ||
+					! isset( $field['id'] ) ||
+					! isset( $fields_requiring_preservation[ $field['id'] ] ) ||
+					! array_key_exists( $field['id'], $original_values )
+				) {
 					continue;
 				}
 
@@ -1237,6 +1318,11 @@ class SettingsUISchema {
 		$field_name = $save['name'] ?? $setting['id'] ?? '';
 		if ( ! is_string( $field_name ) || '' === $field_name ) {
 			throw self::invalid_schema( 'A legacy form-post field must define a non-empty field name.' );
+		}
+
+		$type = isset( $setting['type'] ) && is_string( $setting['type'] ) ? self::normalize_type( $setting['type'] ) : 'text';
+		if ( 'array' === $type && '[]' === substr( $field_name, -2 ) ) {
+			$field_name = substr( $field_name, 0, -2 );
 		}
 
 		if ( false === strpos( $field_name, '[' ) && false === strpos( $field_name, ']' ) ) {
@@ -1843,9 +1929,10 @@ class SettingsUISchema {
 			}
 
 			if ( in_array( $attribute, self::RANGE_ATTRIBUTES, true ) ) {
-				$is_numeric_field = in_array( $field['type'], array( 'number', 'integer' ), true );
-				if ( ! $is_numeric_field && in_array( $field['type'], self::SUPPORTED_FIELD_TYPES, true ) ) {
-					throw self::invalid_schema( sprintf( 'Field "%s" may define "%s" only when its type is "number" or "integer".', $field['id'], $attribute ) );
+				$is_numeric_field  = in_array( $field['type'], array( 'number', 'integer' ), true );
+				$is_temporal_field = in_array( $field['type'], self::TEMPORAL_RANGE_FIELD_TYPES, true );
+				if ( ! $is_numeric_field && ! $is_temporal_field && in_array( $field['type'], self::SUPPORTED_FIELD_TYPES, true ) ) {
+					throw self::invalid_schema( sprintf( 'Field "%s" may define "%s" only when its type supports range attributes.', $field['id'], $attribute ) );
 				}
 				if ( ! $is_numeric_field ) {
 					continue;

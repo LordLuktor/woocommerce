@@ -1104,9 +1104,47 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 			'whitespace number'    => array( '  ', 'number', null ),
 			'zero number'          => array( '0', 'number', 0 ),
 			'decimal number'       => array( '1.25', 'number', 1.25 ),
+			'equivalent decimal'   => array( '01.2500e0', 'number', 1.25 ),
 			'exponent number'      => array( '1e3', 'number', 1000 ),
 			'safe integer maximum' => array( '9007199254740991', 'integer', 9007199254740991 ),
 			'safe integer minimum' => array( '-9007199254740991', 'integer', -9007199254740991 ),
+		);
+	}
+
+	/**
+	 * @testdox It rejects decimal values that change during numeric canonicalization.
+	 *
+	 * @dataProvider lossy_decimal_values
+	 *
+	 * @param string $value Lossy decimal value.
+	 */
+	public function test_canonicalize_schema_values_rejects_lossy_decimal_values( string $value ): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'cannot be represented as a finite number without loss' );
+
+		SettingsUISchema::canonicalize_schema_values(
+			$this->get_native_schema_with_field(
+				array(
+					'id'    => 'acme_number',
+					'label' => 'Number',
+					'type'  => 'number',
+					'value' => $value,
+					'save'  => array( 'adapter' => 'custom' ),
+				)
+			)
+		);
+	}
+
+	/**
+	 * Lossy decimal value fixtures.
+	 *
+	 * @return array<string, array{string}>
+	 */
+	public static function lossy_decimal_values(): array {
+		return array(
+			'rounded fraction' => array( '0.10000000000000001' ),
+			'rounded integer'  => array( '1.0000000000000000001' ),
+			'underflow'        => array( '1e-324' ),
 		);
 	}
 
@@ -1337,6 +1375,41 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 	}
 
 	/**
+	 * @testdox It reads a legacy array option whose configured form name includes the list suffix.
+	 */
+	public function test_from_legacy_settings_reads_array_option_with_list_suffix(): void {
+		update_option(
+			'acme_settings',
+			array(
+				'methods' => array( 'card', 'link' ),
+			)
+		);
+
+		try {
+			$schema = SettingsUISchema::from_legacy_settings(
+				'acme',
+				'',
+				'Acme',
+				array(
+					array(
+						'id'         => 'acme_methods',
+						'field_name' => 'acme_settings[methods][]',
+						'label'      => 'Methods',
+						'type'       => 'multiselect',
+					),
+				)
+			);
+		} finally {
+			delete_option( 'acme_settings' );
+		}
+
+		$field = $schema['groups']['default']['fields'][0];
+		$this->assertSame( array( 'card', 'link' ), $field['value'] );
+		$this->assertSame( 'acme_settings[methods][]', $field['save']['name'] );
+		$this->assertSame( array( 'card', 'link' ), $field['save']['initialValue'] );
+	}
+
+	/**
 	 * @testdox It rejects deeper legacy form names rather than guessing an option path.
 	 */
 	public function test_from_legacy_settings_rejects_deep_form_option_names(): void {
@@ -1381,6 +1454,56 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 					'save'    => array( 'adapter' => 'form_post' ),
 				)
 			)
+		);
+	}
+
+	/**
+	 * @testdox It keeps the canonical string transport for existing option-provider conversion.
+	 *
+	 * @dataProvider compatible_option_provider_values
+	 *
+	 * @param string         $type Field type.
+	 * @param bool|int|float $value Provider value.
+	 * @param string         $expected Canonical string value.
+	 */
+	public function test_canonicalize_schema_values_keeps_option_provider_string_transport( string $type, $value, string $expected ): void {
+		$this->setExpectedIncorrectUsage( SettingsUISchema::class . '::canonicalize_schema_values' );
+
+		$schema = SettingsUISchema::canonicalize_schema_values(
+			$this->get_native_schema_with_field(
+				array(
+					'id'      => 'acme_option',
+					'label'   => 'Option',
+					'type'    => $type,
+					'value'   => $value,
+					'options' => array(
+						array(
+							'label' => 'Current',
+							'value' => $value,
+						),
+					),
+					'save'    => array( 'adapter' => 'form_post' ),
+				)
+			)
+		);
+
+		$field = $schema['groups']['main']['fields'][0];
+		$this->assertSame( $expected, $field['value'] );
+		$this->assertSame( $expected, $field['options'][0]['value'] );
+		$this->assertArrayNotHasKey( 'initialValue', $field['save'] );
+		SettingsUISchema::assert_valid_schema( $schema );
+	}
+
+	/**
+	 * Existing option-provider conversion fixtures.
+	 *
+	 * @return array<string, array{string, bool|int|float, string}>
+	 */
+	public static function compatible_option_provider_values(): array {
+		return array(
+			'select integer'    => array( 'select', 1, '1' ),
+			'radio boolean'     => array( 'radio', true, 'true' ),
+			'extension boolean' => array( 'acme/custom', false, 'false' ),
 		);
 	}
 
@@ -1921,6 +2044,66 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 	}
 
 	/**
+	 * @testdox It accepts HTML range attributes for native temporal fields.
+	 *
+	 * @dataProvider native_temporal_fields_with_range_attributes
+	 *
+	 * @param string $type Field type.
+	 * @param string $value Field value.
+	 * @param array  $custom_attributes HTML range attributes.
+	 */
+	public function test_assert_valid_schema_accepts_range_attributes_for_native_temporal_fields( string $type, string $value, array $custom_attributes ): void {
+		$field = array(
+			'id'               => 'acme_' . $type,
+			'label'            => 'Acme ' . $type,
+			'type'             => $type,
+			'value'            => $value,
+			'customAttributes' => $custom_attributes,
+			'save'             => array( 'adapter' => 'form_post' ),
+		);
+
+		SettingsUISchema::assert_valid_schema( $this->get_native_schema_with_field( $field ) );
+		$this->addToAssertionCount( 1 );
+	}
+
+	/**
+	 * Native temporal field fixtures with valid HTML range attributes.
+	 *
+	 * @return array<string, array{string, string, array<string, int|string>}>
+	 */
+	public static function native_temporal_fields_with_range_attributes(): array {
+		return array(
+			'date'           => array(
+				'date',
+				'2026-08-03',
+				array(
+					'min'  => '2026-01-01',
+					'max'  => '2026-12-31',
+					'step' => 1,
+				),
+			),
+			'time'           => array(
+				'time',
+				'12:30',
+				array(
+					'min'  => '09:00',
+					'max'  => '17:00',
+					'step' => 900,
+				),
+			),
+			'datetime-local' => array(
+				'datetime-local',
+				'2026-08-03T12:30:00+00:00',
+				array(
+					'min'  => '2026-08-03T09:00',
+					'max'  => '2026-08-03T17:00',
+					'step' => 'any',
+				),
+			),
+		);
+	}
+
+	/**
 	 * @testdox It accepts choice fields with missing or empty option lists.
 	 */
 	public function test_assert_valid_schema_accepts_choice_fields_without_options(): void {
@@ -2082,7 +2265,7 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 			'invalid custom attributes'   => array( $invalid_custom_attributes, 'Field "acme_field" customAttributes must be a map.' ),
 			'invalid custom value'        => array( $invalid_custom_attribute_value, 'Field "acme_field" custom attribute "data-values" has an invalid value.' ),
 			'non-finite custom value'     => array( $invalid_custom_attribute_float, 'Field "acme_field" custom attribute "data-value" has an invalid value.' ),
-			'bound on text field'         => array( $invalid_bound, 'Field "acme_field" may define "min" only when its type is "number" or "integer".' ),
+			'bound on text field'         => array( $invalid_bound, 'Field "acme_field" may define "min" only when its type supports range attributes.' ),
 			'saving info field'           => array( $invalid_info, 'Field "acme_field" of type "info" must use the "none" save adapter.' ),
 			'malformed shell navigation'  => array( $invalid_shell, 'Shell navigation item 0 href must be a string.' ),
 			'malformed breadcrumb'        => array( $invalid_breadcrumb, 'Shell breadcrumb 0 label must be a string.' ),

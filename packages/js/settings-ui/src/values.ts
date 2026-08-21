@@ -10,6 +10,56 @@ import type { SettingsValue } from './types';
 
 const STORE_LOCAL_DATETIME_FORMAT = 'Y-m-d\\TH:i:s';
 
+type NormalizedDecimal = [ string, number ];
+
+const normalizeDecimalString = ( value: string ): NormalizedDecimal | null => {
+	const matches = value.match(
+		/^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/
+	);
+	if ( ! matches ) {
+		return null;
+	}
+
+	const whole = matches[ 2 ] || '';
+	const fraction = matches[ 3 ] || matches[ 4 ] || '';
+	let digits = `${ whole }${ fraction }`.replace( /^0+/, '' );
+	if ( digits === '' ) {
+		return [ '0', 0 ];
+	}
+
+	const exponent = Number( matches[ 5 ] || '0' );
+	let power = exponent - fraction.length;
+	if (
+		! Number.isSafeInteger( exponent ) ||
+		! Number.isSafeInteger( power )
+	) {
+		return null;
+	}
+
+	const trailingZeroCount = digits.match( /0+$/ )?.[ 0 ].length || 0;
+	if ( trailingZeroCount > 0 ) {
+		digits = digits.slice( 0, -trailingZeroCount );
+		power += trailingZeroCount;
+	}
+	if ( ! Number.isSafeInteger( power ) ) {
+		return null;
+	}
+
+	return [ matches[ 1 ] === '-' ? `-${ digits }` : digits, power ];
+};
+
+const decimalStringsRepresentSameValue = ( left: string, right: string ) => {
+	const normalizedLeft = normalizeDecimalString( left );
+	const normalizedRight = normalizeDecimalString( right );
+
+	return (
+		normalizedLeft !== null &&
+		normalizedRight !== null &&
+		normalizedLeft[ 0 ] === normalizedRight[ 0 ] &&
+		normalizedLeft[ 1 ] === normalizedRight[ 1 ]
+	);
+};
+
 export const areSettingsValuesEqual = (
 	left: SettingsValue,
 	right: SettingsValue
@@ -43,7 +93,11 @@ export const toCanonicalNumberValue = (
 	if (
 		( Number.isInteger( numberValue ) &&
 			! Number.isSafeInteger( numberValue ) ) ||
-		( integerOnly && ! Number.isInteger( numberValue ) )
+		( integerOnly && ! Number.isInteger( numberValue ) ) ||
+		! decimalStringsRepresentSameValue(
+			value.trim(),
+			String( numberValue )
+		)
 	) {
 		return null;
 	}

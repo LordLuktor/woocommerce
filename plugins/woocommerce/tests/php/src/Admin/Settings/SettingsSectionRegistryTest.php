@@ -175,7 +175,7 @@ class SettingsSectionRegistryTest extends WC_Unit_Test_Case {
 	public function test_registered_native_page_schema_accepts_transitional_number_and_datetime_values(): void {
 		$this->setExpectedIncorrectUsage( SettingsUISchema::class . '::canonicalize_schema_values' );
 		$compatibility_notices = 0;
-		$notice_listener       = static function ( string $function_name ) use ( &$compatibility_notices ): void {
+		$notice_listener       = static function ( $function_name ) use ( &$compatibility_notices ): void {
 			if ( SettingsUISchema::class . '::canonicalize_schema_values' === $function_name ) {
 				++$compatibility_notices;
 			}
@@ -241,10 +241,7 @@ class SettingsSectionRegistryTest extends WC_Unit_Test_Case {
 						'label'   => 'Tier',
 						'type'    => 'select',
 						'value'   => 1,
-						'save'    => array(
-							'adapter'      => 'form_post',
-							'initialValue' => '1',
-						),
+						'save'    => array( 'adapter' => 'form_post' ),
 						'options' => array(
 							array(
 								'label' => 'One',
@@ -267,6 +264,7 @@ class SettingsSectionRegistryTest extends WC_Unit_Test_Case {
 		$field = $schema['groups']['native_group']['fields'][0];
 		$this->assertSame( '1', $field['value'], 'The selected value should follow its options to string form.' );
 		$this->assertSame( array( '1', '2' ), array_column( $field['options'], 'value' ), 'Scalar option values should canonicalize to strings.' );
+		$this->assertArrayNotHasKey( 'initialValue', $field['save'], 'Existing option conversion should keep using its canonical string transport.' );
 	}
 
 	/**
