@@ -50,13 +50,6 @@ class SettingsUISchema {
 	);
 
 	/**
-	 * Field types that require a choice list.
-	 *
-	 * @var string[]
-	 */
-	private const CHOICE_FIELD_TYPES = array( 'array', 'radio', 'select' );
-
-	/**
 	 * Custom attributes that describe a numeric range.
 	 *
 	 * @var string[]
@@ -81,9 +74,11 @@ class SettingsUISchema {
 	 * @param array  $settings Legacy settings definitions.
 	 * @param string $default_save_adapter Default save adapter.
 	 * @return array
+	 * @throws \InvalidArgumentException When legacy settings contain duplicate group ids.
 	 */
 	public static function from_legacy_settings( string $page_id, string $section, string $title, array $settings, string $default_save_adapter = 'form_post' ): array {
 		$groups                = array();
+		$declared_group_ids    = self::get_declared_group_ids( $settings );
 		$current_group         = null;
 		$current_id            = null;
 		$group_index           = 0;
@@ -104,7 +99,7 @@ class SettingsUISchema {
 
 				$current_id    = isset( $setting['id'] ) && is_scalar( $setting['id'] ) && '' !== (string) $setting['id']
 					? (string) $setting['id']
-					: 'group_' . $group_index;
+					: self::get_unique_group_id( 'group_' . $group_index, $groups, $declared_group_ids );
 				$current_group = array(
 					'id'          => $current_id,
 					'title'       => isset( $setting['title'] ) && is_scalar( $setting['title'] ) ? html_entity_decode( (string) $setting['title'], ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML401 ) : '',
@@ -132,8 +127,8 @@ class SettingsUISchema {
 			}
 
 			if ( ! $current_group ) {
-				$current_id    = self::DEFAULT_GROUP_ID;
-				$current_group = self::get_default_group( $group_index );
+				$current_id    = self::get_unique_group_id( self::DEFAULT_GROUP_ID, $groups, $declared_group_ids );
+				$current_group = self::get_default_group( $current_id, $group_index );
 				++$group_index;
 			}
 
@@ -190,16 +185,16 @@ class SettingsUISchema {
 	// phpcs:disable WordPress.Security.EscapeOutput.ExceptionNotEscaped
 
 	/**
-	 * Assert that a schema is safe for the current Settings UI renderer.
+	 * Assert that a schema can safely cross the PHP-to-JavaScript boundary.
 	 *
 	 * Compatibility normalization and request-owned shell defaults must run
 	 * before this assertion. An invalid schema throws before it can be cached or
 	 * emitted to JavaScript.
 	 *
-	 * @since 11.1.0
+	 * @since 11.2.0
 	 *
 	 * @param array $schema Settings UI schema.
-	 * @throws \InvalidArgumentException When the schema is malformed or unsupported.
+	 * @throws \InvalidArgumentException When the schema is malformed.
 	 */
 	public static function assert_valid_schema( array $schema ): void {
 		self::assert_non_empty_string( $schema['id'] ?? null, 'Schema id must be a non-empty string.' );
@@ -221,22 +216,20 @@ class SettingsUISchema {
 			throw self::invalid_schema( 'Schema groups must be a map.' );
 		}
 
-		$group_ids = array();
 		foreach ( $schema['groups'] as $group_key => $group ) {
-			if ( ! is_string( $group_key ) || '' === $group_key ) {
+			$group_id = (string) $group_key;
+			if ( '' === $group_id ) {
 				throw self::invalid_schema( 'Group map keys must be non-empty strings.' );
 			}
 
 			if ( ! is_array( $group ) ) {
-				throw self::invalid_schema( sprintf( 'Group "%s" must be an array.', $group_key ) );
+				throw self::invalid_schema( sprintf( 'Group "%s" must be an array.', $group_id ) );
 			}
 
-			self::assert_non_empty_string( $group['id'] ?? null, sprintf( 'Group "%s" id must be a non-empty string.', $group_key ) );
-			if ( $group_key !== $group['id'] ) {
-				throw self::invalid_schema( sprintf( 'Group map key "%s" must match group id "%s".', $group_key, $group['id'] ) );
+			self::assert_non_empty_string( $group['id'] ?? null, sprintf( 'Group "%s" id must be a non-empty string.', $group_id ) );
+			if ( $group_id !== $group['id'] ) {
+				throw self::invalid_schema( sprintf( 'Group map key "%s" must match group id "%s".', $group_id, $group['id'] ) );
 			}
-
-			$group_ids[] = $group['id'];
 		}
 
 		$field_ids        = array();
@@ -257,14 +250,14 @@ class SettingsUISchema {
 
 				self::assert_non_empty_string( $field['id'] ?? null, sprintf( 'Group "%s" field %d id must be a non-empty string.', $group_id, $field_index ) );
 				$field_id = $field['id'];
-				if ( in_array( $field_id, $field_ids, true ) ) {
+				if ( isset( $field_ids[ $field_id ] ) ) {
 					throw self::invalid_schema( sprintf( 'Field id "%s" is duplicated.', $field_id ) );
 				}
-				if ( in_array( $field_id, $group_ids, true ) ) {
+				if ( isset( $schema['groups'][ $field_id ] ) ) {
 					throw self::invalid_schema( sprintf( 'Field id "%s" collides with a group id.', $field_id ) );
 				}
 
-				$field_ids[] = $field_id;
+				$field_ids[ $field_id ] = true;
 				self::assert_field( $field );
 				if ( isset( $field['visibility'] ) ) {
 					$visibility_rules[ $field_id ] = $field['visibility'];
@@ -274,7 +267,7 @@ class SettingsUISchema {
 
 		foreach ( $visibility_rules as $field_id => $visibility ) {
 			$controller = $visibility['controller'];
-			if ( ! in_array( $controller, $field_ids, true ) ) {
+			if ( ! isset( $field_ids[ $controller ] ) ) {
 				throw self::invalid_schema( sprintf( 'Field "%s" visibility controller "%s" does not reference a field.', $field_id, $controller ) );
 			}
 		}
@@ -1321,12 +1314,134 @@ class SettingsUISchema {
 	 * @return array
 	 */
 	private static function get_options( array $setting ): array {
+		$type = isset( $setting['type'] ) && is_string( $setting['type'] ) ? $setting['type'] : '';
+
+		if ( 'single_select_page' === $type ) {
+			return self::get_page_options( $setting );
+		}
+
+		if ( 'single_select_country' === $type ) {
+			$countries = self::get_countries_controller();
+
+			return $countries ? self::get_country_and_state_options( $countries ) : array();
+		}
+
+		if ( 'multi_select_countries' === $type ) {
+			if ( ! isset( $setting['options'] ) || ! is_array( $setting['options'] ) || empty( $setting['options'] ) ) {
+				$countries_controller = self::get_countries_controller();
+				if ( ! $countries_controller ) {
+					return array();
+				}
+
+				$options = $countries_controller->get_countries();
+			} else {
+				$options = $setting['options'];
+			}
+
+			asort( $options );
+
+			return self::normalize_options( $options );
+		}
+
 		if ( ! isset( $setting['options'] ) || ! is_array( $setting['options'] ) ) {
 			return array();
 		}
 
+		return self::normalize_options( $setting['options'] );
+	}
+
+	/**
+	 * Get the initialized WooCommerce countries controller.
+	 *
+	 * @return \WC_Countries|null
+	 */
+	private static function get_countries_controller(): ?\WC_Countries {
+		if ( ! function_exists( 'WC' ) ) {
+			return null;
+		}
+
+		$woocommerce = WC();
+
+		return $woocommerce && $woocommerce->countries instanceof \WC_Countries ? $woocommerce->countries : null;
+	}
+
+	/**
+	 * Build options for a legacy page selector.
+	 *
+	 * @param array $setting Legacy field definition.
+	 * @return array
+	 */
+	private static function get_page_options( array $setting ): array {
+		$args = array(
+			'sort_column' => 'menu_order',
+			'sort_order'  => 'ASC',
+			'post_status' => array( 'publish', 'private', 'draft' ),
+		);
+
+		if ( isset( $setting['args'] ) && is_array( $setting['args'] ) ) {
+			$args = wp_parse_args( $setting['args'], $args );
+		}
+
+		$options = array(
+			array(
+				'label' => __( 'Select a page...', 'woocommerce' ),
+				'value' => '',
+			),
+		);
+
+		$pages = get_pages( $args );
+		if ( ! is_array( $pages ) ) {
+			return $options;
+		}
+
+		foreach ( $pages as $page ) {
+			$options[] = array(
+				'label' => wp_strip_all_tags( $page->post_title ),
+				'value' => (string) $page->ID,
+			);
+		}
+
+		return $options;
+	}
+
+	/**
+	 * Build country and state options for a legacy country selector.
+	 *
+	 * @param \WC_Countries $countries Countries controller.
+	 * @return array
+	 */
+	private static function get_country_and_state_options( \WC_Countries $countries ): array {
 		$options = array();
-		foreach ( $setting['options'] as $value => $label ) {
+		foreach ( $countries->get_countries() as $country_code => $country_label ) {
+			$states = $countries->get_states( $country_code );
+			if ( $states ) {
+				foreach ( $states as $state_code => $state_label ) {
+					$options[] = array(
+						'label' => wp_strip_all_tags( $country_label . ' — ' . $state_label ),
+						'value' => $country_code . ':' . $state_code,
+					);
+				}
+				continue;
+			}
+
+			$options[] = array(
+				'label' => wp_strip_all_tags( $country_label ),
+				'value' => (string) $country_code,
+			);
+		}
+
+		return $options;
+	}
+
+	/**
+	 * Normalize an option map.
+	 *
+	 * @param array $raw_options Raw option map.
+	 * @return array
+	 */
+	private static function normalize_options( array $raw_options ): array {
+		$options = array();
+		foreach ( $raw_options as $value => $label ) {
 			if ( ! is_scalar( $label ) && null !== $label ) {
 				continue;
 			}
@@ -1500,10 +1615,10 @@ class SettingsUISchema {
 			}
 
 			self::assert_non_empty_string( $item['id'] ?? null, sprintf( '%s item %d id must be a non-empty string.', $context, $index ) );
-			if ( in_array( $item['id'], $ids, true ) ) {
+			if ( isset( $ids[ $item['id'] ] ) ) {
 				throw self::invalid_schema( sprintf( '%s item id "%s" is duplicated.', $context, $item['id'] ) );
 			}
-			$ids[] = $item['id'];
+			$ids[ $item['id'] ] = true;
 
 			foreach ( array( 'label', 'href' ) as $property ) {
 				if ( ! isset( $item[ $property ] ) || ! is_string( $item[ $property ] ) ) {
@@ -1561,8 +1676,8 @@ class SettingsUISchema {
 				throw self::invalid_schema( sprintf( 'Shell badge %d label must be a string.', $index ) );
 			}
 
-			if ( isset( $badge['intent'] ) && ! in_array( $badge['intent'], array( 'default', 'info', 'success', 'warning', 'error' ), true ) ) {
-				throw self::invalid_schema( sprintf( 'Shell badge %d intent "%s" is not supported.', $index, is_scalar( $badge['intent'] ) ? (string) $badge['intent'] : gettype( $badge['intent'] ) ) );
+			if ( isset( $badge['intent'] ) && ! is_string( $badge['intent'] ) ) {
+				throw self::invalid_schema( sprintf( 'Shell badge %d intent must be a string.', $index ) );
 			}
 		}
 	}
@@ -1589,10 +1704,10 @@ class SettingsUISchema {
 			}
 
 			self::assert_non_empty_string( $action['id'] ?? null, sprintf( 'Group "%s" action %d id must be a non-empty string.', $group_id, $index ) );
-			if ( in_array( $action['id'], $ids, true ) ) {
+			if ( isset( $ids[ $action['id'] ] ) ) {
 				throw self::invalid_schema( sprintf( 'Group "%s" action id "%s" is duplicated.', $group_id, $action['id'] ) );
 			}
-			$ids[] = $action['id'];
+			$ids[ $action['id'] ] = true;
 
 			foreach ( array( 'label', 'href' ) as $property ) {
 				if ( ! isset( $action[ $property ] ) || ! is_string( $action[ $property ] ) ) {
@@ -1616,9 +1731,7 @@ class SettingsUISchema {
 		}
 
 		$type = $field['type'] ?? null;
-		if ( ! is_string( $type ) || ! in_array( $type, self::SUPPORTED_FIELD_TYPES, true ) ) {
-			throw self::invalid_schema( sprintf( 'Field "%s" has unsupported type "%s".', $field_id, is_scalar( $type ) ? (string) $type : gettype( $type ) ) );
-		}
+		self::assert_non_empty_string( $type, sprintf( 'Field "%s" type must be a non-empty string.', $field_id ) );
 
 		self::assert_optional_strings( $field, array( 'description', 'placeholder' ), sprintf( 'Field "%s"', $field_id ) );
 		if ( isset( $field['disabled'] ) && ! is_bool( $field['disabled'] ) ) {
@@ -1665,7 +1778,9 @@ class SettingsUISchema {
 				$valid = null === $value || ( is_string( $value ) && 1 === preg_match( '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/', $value ) );
 				break;
 			default:
-				$valid = is_string( $value );
+				$valid = in_array( $field['type'], self::SUPPORTED_FIELD_TYPES, true )
+					? is_string( $value )
+					: self::is_settings_value( $value );
 				break;
 		}
 
@@ -1680,15 +1795,12 @@ class SettingsUISchema {
 	 * @param array $field Field definition.
 	 */
 	private static function assert_field_options( array $field ): void {
-		$field_id = $field['id'];
-		$options  = $field['options'] ?? null;
-		if ( in_array( $field['type'], self::CHOICE_FIELD_TYPES, true ) && ( ! is_array( $options ) || empty( $options ) || ! ArrayUtil::array_is_list( $options ) ) ) {
-			throw self::invalid_schema( sprintf( 'Field "%s" of type "%s" must define a non-empty options list.', $field_id, $field['type'] ) );
-		}
-
-		if ( null === $options ) {
+		if ( ! array_key_exists( 'options', $field ) ) {
 			return;
 		}
+
+		$field_id = $field['id'];
+		$options  = $field['options'];
 
 		if ( ! is_array( $options ) || ! ArrayUtil::array_is_list( $options ) ) {
 			throw self::invalid_schema( sprintf( 'Field "%s" options must be a list.', $field_id ) );
@@ -1726,13 +1838,17 @@ class SettingsUISchema {
 				throw self::invalid_schema( sprintf( 'Field "%s" custom attribute names must be non-empty strings.', $field['id'] ) );
 			}
 
-			if ( ! is_string( $value ) && ! is_int( $value ) && ! is_float( $value ) && ! is_bool( $value ) ) {
+			if ( ! is_scalar( $value ) || ( is_float( $value ) && ! is_finite( $value ) ) ) {
 				throw self::invalid_schema( sprintf( 'Field "%s" custom attribute "%s" has an invalid value.', $field['id'], $attribute ) );
 			}
 
 			if ( in_array( $attribute, self::RANGE_ATTRIBUTES, true ) ) {
-				if ( ! in_array( $field['type'], array( 'number', 'integer' ), true ) ) {
+				$is_numeric_field = in_array( $field['type'], array( 'number', 'integer' ), true );
+				if ( ! $is_numeric_field && in_array( $field['type'], self::SUPPORTED_FIELD_TYPES, true ) ) {
 					throw self::invalid_schema( sprintf( 'Field "%s" may define "%s" only when its type is "number" or "integer".', $field['id'], $attribute ) );
+				}
+				if ( ! $is_numeric_field ) {
+					continue;
 				}
 
 				$allow_any = 'step' === $attribute;
@@ -2003,18 +2119,63 @@ class SettingsUISchema {
 	/**
 	 * Get the default group.
 	 *
-	 * @param int $order Group order.
+	 * @param string $group_id Group id.
+	 * @param int    $order Group order.
 	 * @return array
 	 */
-	private static function get_default_group( int $order ): array {
+	private static function get_default_group( string $group_id, int $order ): array {
 		return array(
-			'id'          => self::DEFAULT_GROUP_ID,
+			'id'          => $group_id,
 			'title'       => '',
 			'description' => '',
 			'actions'     => array(),
 			'order'       => $order,
 			'fields'      => array(),
 		);
+	}
+
+	/**
+	 * Get explicit legacy group ids that generated ids must not claim.
+	 *
+	 * @param array $settings Legacy settings definitions.
+	 * @return array<string, true>
+	 */
+	private static function get_declared_group_ids( array $settings ): array {
+		$group_ids = array();
+
+		foreach ( $settings as $setting ) {
+			if (
+				is_array( $setting )
+				&& 'title' === ( $setting['type'] ?? null )
+				&& isset( $setting['id'] )
+				&& is_scalar( $setting['id'] )
+				&& '' !== (string) $setting['id']
+			) {
+				$group_ids[ (string) $setting['id'] ] = true;
+			}
+		}
+
+		return $group_ids;
+	}
+
+	/**
+	 * Get an unused id for a generated legacy group.
+	 *
+	 * @param string               $base_id Base group id.
+	 * @param array<string, array> $groups Existing groups.
+	 * @param array<string, true>  $declared_group_ids Explicit group ids.
+	 * @return string
+	 */
+	private static function get_unique_group_id( string $base_id, array $groups, array $declared_group_ids ): string {
+		$group_id = $base_id;
+		$suffix   = 1;
+
+		while ( array_key_exists( $group_id, $groups ) || isset( $declared_group_ids[ $group_id ] ) ) {
+			$group_id = $base_id . '_' . $suffix;
+			++$suffix;
+		}
+
+		return $group_id;
 	}
 
 	/**

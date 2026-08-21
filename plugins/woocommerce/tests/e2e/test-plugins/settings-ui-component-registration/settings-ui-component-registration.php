@@ -20,9 +20,8 @@ defined( 'ABSPATH' ) || exit;
  */
 final class WC_Settings_UI_Component_Registration_Test_Plugin {
 
-	private const REGISTERED_HANDLE   = 'settings-ui-component-test-registered';
-	private const MISSING_HANDLE      = 'settings-ui-component-test-missing-registration';
-	private const UNREGISTERED_HANDLE = 'settings-ui-component-test-unregistered';
+	private const REGISTERED_HANDLE = 'settings-ui-component-test-registered';
+	private const MISSING_HANDLE    = 'settings-ui-component-test-missing-registration';
 
 	/**
 	 * Register hooks.
@@ -61,14 +60,12 @@ window.wcSettingsUI.registerSettingsExtension( {
 } );
 JS
 		);
-		wp_enqueue_script( self::REGISTERED_HANDLE );
 
 		wp_register_script( self::MISSING_HANDLE, false, array( 'wc-settings-ui' ), '1.0.0', true );
 		wp_add_inline_script(
 			self::MISSING_HANDLE,
 			'window.wcSettingsUIComponentTest = window.wcSettingsUIComponentTest || {}; window.wcSettingsUIComponentTest.missingRegistrationScriptExecuted = true;'
 		);
-		wp_enqueue_script( self::MISSING_HANDLE );
 	}
 
 	/**
@@ -81,7 +78,6 @@ JS
 	public static function register_sections( SettingsSectionRegistry $registry ): void {
 		$registry->register( self::create_section( 'settings_ui_component_registered', self::REGISTERED_HANDLE ) );
 		$registry->register( self::create_section( 'settings_ui_component_missing', self::MISSING_HANDLE ) );
-		$registry->register( self::create_section( 'settings_ui_component_unregistered', self::UNREGISTERED_HANDLE ) );
 	}
 
 	/**

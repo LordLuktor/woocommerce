@@ -151,32 +151,22 @@ registerSettingsExtension( {
 		page: 'my_plugin',
 	},
 	typeRenderers: {
-		text: TextField,
+		my_plugin_color: ColorField,
 	},
 } );
 ```
 
-`typeRenderers` only overrides a canonical field type that WooCommerce already accepts. It does not register a new field type. PHP rejects unknown types before the Settings UI mounts.
-
-To migrate an extension-defined type, keep the field's storage shape on a canonical type and name the specialized component explicitly:
-
-```php
-array(
-	'id'        => 'my_plugin_color',
-	'title'     => __( 'Color', 'my-plugin' ),
-	'type'      => 'text',
-	'component' => 'my-plugin/color-field',
-)
-```
-
-Register `my-plugin/color-field` in `components`, or use `fieldOverrides` when the PHP field metadata cannot be changed yet.
+The PHP schema validator accepts extension-defined field types when their values use the Settings UI value contract. The extension script must register the matching renderer before the page mounts.
 
 Resolution order is:
 
 1. `field.component`
 2. `fieldOverrides[ field.id ]`
 3. `typeRenderers[ field.type ]`
-4. Native field renderer
+
+If one registry entry is missing, resolution continues to the next registry entry. When a field declares `field.component`, that metadata states that a custom control is required. If no named component, field override, or type renderer resolves it, the page fails closed instead of silently replacing the required control with a native field.
+
+For a field without `field.component`, the native field renderer is the final fallback after field overrides and type renderers.
 
 ## Enqueue the component script
 
@@ -216,4 +206,4 @@ WooCommerce loads the settings UI package first, then your script, then mounts t
 
 WooCommerce validates server-observable schema metadata and declared script handles before rendering the Settings UI mount. An invalid schema or a script handle that is not registered and enqueued renders the complete classic settings page in the same response.
 
-PHP cannot inspect the component registry in the browser. If a declared script executes but does not register the named component, or if the component throws while rendering, the Settings UI fails closed inside its page error boundary. It renders no editable fallback control and no Save action. The error notice offers a **Use classic settings** action that reloads the same page and section with `wc_settings_ui=classic` for that request. The action does not disable the feature flag, persist a preference, or reload automatically.
+PHP cannot inspect the component registry in the browser. The Settings UI fails closed when an explicitly required component has no registry fallback, when a field without an explicit component has no registered or native renderer, or when a component throws while rendering. It renders no editable fallback control and no Save action. The error notice offers a **Use classic settings** action that reloads the same page and section with `wc_settings_ui=classic` for that request. The action does not disable the feature flag, persist a preference, or reload automatically.

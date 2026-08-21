@@ -289,31 +289,198 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 		$this->assertSame( 'Read-only <strong>information</strong>alert("x").', $field['description'] );
 		$this->assertArrayHasKey( 'adapter', $field['save'] );
 		$this->assertSame( 'none', $field['save']['adapter'] );
+		SettingsUISchema::assert_valid_schema( $schema );
 	}
 
 	/**
-	 * @testdox It keeps info fields non-saving when their description comes from desc.
+	 * @testdox It builds options for legacy page selectors that do not declare options.
 	 */
-	public function test_from_legacy_settings_marks_info_fields_with_descriptions_as_non_saving(): void {
+	public function test_from_legacy_settings_builds_page_options(): void {
+		$page_id = self::factory()->post->create(
+			array(
+				'post_type'   => 'page',
+				'post_status' => 'publish',
+				'post_title'  => 'Checkout',
+			)
+		);
+
 		$schema = SettingsUISchema::from_legacy_settings(
-			'test',
+			'acme',
 			'',
-			'Test settings',
+			'Acme',
 			array(
 				array(
-					'id'   => 'woocommerce_test_info',
-					'type' => 'info',
-					'desc' => 'Read-only information.',
+					'id'    => 'acme_page',
+					'label' => 'Acme page',
+					'type'  => 'single_select_page',
+					'value' => (string) $page_id,
+				),
+			)
+		);
+
+		$field   = $schema['groups']['default']['fields'][0];
+		$options = array_column( $field['options'], 'label', 'value' );
+
+		$this->assertSame( 'select', $field['type'], 'The legacy page selector should use the canonical select type.' );
+		$this->assertSame( (string) $page_id, $field['value'], 'The selected page ID should stay unchanged.' );
+		$this->assertSame( 'Checkout', $options[ (string) $page_id ], 'The created page should be available as an option.' );
+		SettingsUISchema::assert_valid_schema( $schema );
+	}
+
+	/**
+	 * @testdox It builds country and state options for legacy country selectors that do not declare options.
+	 */
+	public function test_from_legacy_settings_builds_country_and_state_options(): void {
+		$schema = SettingsUISchema::from_legacy_settings(
+			'acme',
+			'',
+			'Acme',
+			array(
+				array(
+					'id'    => 'acme_country',
+					'label' => 'Acme country',
+					'type'  => 'single_select_country',
+					'value' => 'US:CA',
+				),
+			)
+		);
+
+		$field         = $schema['groups']['default']['fields'][0];
+		$options       = array_column( $field['options'], 'label', 'value' );
+		$country_label = WC()->countries->get_countries()['US'];
+		$state_label   = WC()->countries->get_states( 'US' )['CA'];
+
+		$this->assertSame( 'select', $field['type'], 'The legacy country selector should use the canonical select type.' );
+		$this->assertSame( 'US:CA', $field['value'], 'The selected country and state value should stay unchanged.' );
+		$this->assertSame( $country_label . ' — ' . $state_label, $options['US:CA'], 'The state option should include its country label.' );
+		SettingsUISchema::assert_valid_schema( $schema );
+	}
+
+	/**
+	 * @testdox It builds options for legacy country multiselects that do not declare options.
+	 */
+	public function test_from_legacy_settings_builds_country_multiselect_options(): void {
+		$schema = SettingsUISchema::from_legacy_settings(
+			'acme',
+			'',
+			'Acme',
+			array(
+				array(
+					'id'    => 'acme_countries',
+					'label' => 'Acme countries',
+					'type'  => 'multi_select_countries',
+					'value' => array( 'US', 'MA' ),
+				),
+			)
+		);
+
+		$field   = $schema['groups']['default']['fields'][0];
+		$options = array_column( $field['options'], 'label', 'value' );
+
+		$this->assertSame( 'array', $field['type'], 'The legacy country multiselect should use the canonical array type.' );
+		$this->assertSame( array( 'US', 'MA' ), $field['value'], 'The selected country values should stay unchanged.' );
+		$this->assertSame( WC()->countries->get_countries()['US'], $options['US'], 'The United States should be available as an option.' );
+		$this->assertSame( WC()->countries->get_countries()['MA'], $options['MA'], 'Morocco should be available as an option.' );
+		SettingsUISchema::assert_valid_schema( $schema );
+	}
+
+	/**
+	 * @testdox It sorts declared legacy country multiselect options by label.
+	 */
+	public function test_from_legacy_settings_sorts_declared_country_multiselect_options(): void {
+		$schema = SettingsUISchema::from_legacy_settings(
+			'acme',
+			'',
+			'Acme',
+			array(
+				array(
+					'id'      => 'acme_countries',
+					'label'   => 'Acme countries',
+					'type'    => 'multi_select_countries',
+					'options' => array(
+						'US' => 'Zulu country',
+						'MA' => 'Alpha country',
+					),
 				),
 			)
 		);
 
 		$field = $schema['groups']['default']['fields'][0];
 
-		$this->assertSame( 'Read-only information.', $field['description'] );
-		$this->assertArrayHasKey( 'adapter', $field['save'] );
-		$this->assertSame( 'none', $field['save']['adapter'] );
+		$this->assertSame(
+			array(
+				array(
+					'label' => 'Alpha country',
+					'value' => 'MA',
+				),
+				array(
+					'label' => 'Zulu country',
+					'value' => 'US',
+				),
+			),
+			$field['options'],
+			'The canonical options should match the label order used by the classic renderer.'
+		);
 		SettingsUISchema::assert_valid_schema( $schema );
+	}
+
+	/**
+	 * @testdox It leaves generated country options empty when the countries controller is unavailable.
+	 */
+	public function test_from_legacy_settings_handles_an_unavailable_countries_controller(): void {
+		$woocommerce            = WC();
+		$original_countries     = $woocommerce->countries;
+		$woocommerce->countries = null;
+
+		try {
+			$schema = SettingsUISchema::from_legacy_settings(
+				'acme',
+				'',
+				'Acme',
+				array(
+					array(
+						'id'   => 'acme_country',
+						'type' => 'single_select_country',
+					),
+					array(
+						'id'   => 'acme_countries',
+						'type' => 'multi_select_countries',
+					),
+				)
+			);
+		} finally {
+			$woocommerce->countries = $original_countries;
+		}
+
+		$fields = $schema['groups']['default']['fields'];
+		$this->assertArrayNotHasKey( 'options', $fields[0], 'The country selector should not fail when the countries controller is unavailable.' );
+		$this->assertArrayNotHasKey( 'options', $fields[1], 'The country multiselect should not fail when the countries controller is unavailable.' );
+		SettingsUISchema::assert_valid_schema( $schema );
+	}
+
+	/**
+	 * @testdox It accepts an ordinary legacy multiselect with no options.
+	 */
+	public function test_from_legacy_settings_accepts_multiselect_without_options(): void {
+		$schema = SettingsUISchema::from_legacy_settings(
+			'acme',
+			'',
+			'Acme',
+			array(
+				array(
+					'id'    => 'acme_choices',
+					'label' => 'Acme choices',
+					'type'  => 'multiselect',
+					'value' => array(),
+				),
+			)
+		);
+
+		SettingsUISchema::assert_valid_schema( $schema );
+
+		$field = $schema['groups']['default']['fields'][0];
+		$this->assertSame( 'array', $field['type'], 'The legacy multiselect should use the canonical array type.' );
+		$this->assertArrayNotHasKey( 'options', $field, 'An empty legacy option map should remain an empty choice set.' );
 	}
 
 	/**
@@ -367,6 +534,77 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 			'normal id'      => array( 'main' ),
 			'zero-string id' => array( '0' ),
 		);
+	}
+
+	/**
+	 * @testdox It gives separate generated groups to separate runs of loose fields.
+	 */
+	public function test_from_legacy_settings_preserves_separate_runs_of_loose_fields(): void {
+		$schema = SettingsUISchema::from_legacy_settings(
+			'acme',
+			'',
+			'Acme',
+			array(
+				array(
+					'id'    => 'acme_before',
+					'type'  => 'text',
+					'title' => 'Before',
+				),
+				array(
+					'id'    => 'main',
+					'type'  => 'title',
+					'title' => 'Main',
+				),
+				array(
+					'id'    => 'acme_main',
+					'type'  => 'text',
+					'title' => 'Main field',
+				),
+				array( 'type' => 'sectionend' ),
+				array(
+					'id'    => 'acme_after',
+					'type'  => 'text',
+					'title' => 'After',
+				),
+			)
+		);
+
+		$this->assertSame( array( 'default', 'main', 'default_1' ), array_keys( $schema['groups'] ) );
+		$this->assertSame( 'acme_before', $schema['groups']['default']['fields'][0]['id'] );
+		$this->assertSame( 'acme_main', $schema['groups']['main']['fields'][0]['id'] );
+		$this->assertSame( 'acme_after', $schema['groups']['default_1']['fields'][0]['id'] );
+	}
+
+	/**
+	 * @testdox It reserves explicit group ids when it generates a group for loose fields.
+	 */
+	public function test_from_legacy_settings_avoids_explicit_group_id_when_generating_loose_group(): void {
+		$schema = SettingsUISchema::from_legacy_settings(
+			'acme',
+			'',
+			'Acme',
+			array(
+				array(
+					'id'    => 'acme_loose',
+					'type'  => 'text',
+					'title' => 'Loose field',
+				),
+				array(
+					'id'    => 'default',
+					'type'  => 'title',
+					'title' => 'Declared default',
+				),
+				array(
+					'id'    => 'acme_declared',
+					'type'  => 'text',
+					'title' => 'Declared field',
+				),
+			)
+		);
+
+		$this->assertSame( array( 'default_1', 'default' ), array_keys( $schema['groups'] ) );
+		$this->assertSame( 'acme_loose', $schema['groups']['default_1']['fields'][0]['id'] );
+		$this->assertSame( 'acme_declared', $schema['groups']['default']['fields'][0]['id'] );
 	}
 
 	/**
@@ -1626,31 +1864,21 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 	}
 
 	/**
-	 * @testdox It accepts every field type supported by the current renderer.
+	 * @testdox It accepts canonical native values and extension transport values.
 	 *
-	 * @dataProvider supported_field_types
+	 * @dataProvider settings_ui_values
 	 *
 	 * @param string $type Field type.
 	 * @param mixed  $value Field value.
 	 */
-	public function test_assert_valid_schema_accepts_supported_field_types( string $type, $value ): void {
+	public function test_assert_valid_schema_accepts_settings_ui_values_without_interpreting_field_type( string $type, $value ): void {
 		$field = array(
-			'id'    => 'acme_' . str_replace( '-', '_', $type ),
-			'label' => 'Acme field',
+			'id'    => 'acme_custom_field',
+			'label' => 'Acme custom field',
 			'type'  => $type,
 			'value' => $value,
 			'save'  => array( 'adapter' => 'form_post' ),
 		);
-
-		if ( in_array( $type, array( 'array', 'radio', 'select' ), true ) ) {
-			$field['options'] = array(
-				array(
-					'label' => 'Option A',
-					'value' => 'a',
-				),
-			);
-		}
-
 		if ( 'info' === $type ) {
 			unset( $field['value'] );
 			$field['save'] = array( 'adapter' => 'none' );
@@ -1661,71 +1889,83 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 	}
 
 	/**
-	 * Supported field type fixtures.
+	 * Settings UI transport value fixtures.
 	 *
 	 * @return array<string, array{string, mixed}>
 	 */
-	public static function supported_field_types(): array {
+	public static function settings_ui_values(): array {
 		return array(
-			'array'          => array( 'array', array( 'a' ) ),
-			'checkbox'       => array( 'checkbox', true ),
-			'date'           => array( 'date', '2026-08-03' ),
-			'datetime-local' => array( 'datetime-local', '2026-08-03T12:30:00+00:00' ),
-			'email'          => array( 'email', 'merchant@example.com' ),
-			'info'           => array( 'info', null ),
-			'integer'        => array( 'integer', 2 ),
-			'number'         => array( 'number', 2 ),
-			'password'       => array( 'password', 'secret' ),
-			'radio'          => array( 'radio', 'a' ),
-			'select'         => array( 'select', 'a' ),
-			'tel'            => array( 'tel', '+1 555 555 5555' ),
-			'text'           => array( 'text', 'Acme' ),
-			'textarea'       => array( 'textarea', 'Acme description' ),
-			'time'           => array( 'time', '12:30' ),
-			'url'            => array( 'url', 'https://example.com' ),
+			'array'                 => array( 'array', array( 'a' ) ),
+			'checkbox'              => array( 'checkbox', true ),
+			'date'                  => array( 'date', '2026-08-03' ),
+			'datetime-local'        => array( 'datetime-local', '2026-08-03T12:30:00+00:00' ),
+			'email'                 => array( 'email', 'merchant@example.com' ),
+			'info'                  => array( 'info', null ),
+			'integer'               => array( 'integer', 2 ),
+			'number'                => array( 'number', 2 ),
+			'password'              => array( 'password', 'secret' ),
+			'radio'                 => array( 'radio', 'a' ),
+			'select'                => array( 'select', 'a' ),
+			'tel'                   => array( 'tel', '+1 555 555 5555' ),
+			'text'                  => array( 'text', 'Acme' ),
+			'textarea'              => array( 'textarea', 'Acme description' ),
+			'time'                  => array( 'time', '12:30' ),
+			'url'                   => array( 'url', 'https://example.com' ),
+			'extension string'      => array( 'acme/custom', 'Acme' ),
+			'extension integer'     => array( 'acme/custom', 10 ),
+			'extension float'       => array( 'acme/custom', 10.5 ),
+			'extension boolean'     => array( 'acme/custom', true ),
+			'extension string list' => array( 'acme/custom', array( 'one', 'two' ) ),
+			'extension null'        => array( 'acme/custom', null ),
 		);
 	}
 
 	/**
-	 * @testdox It normalizes every legacy field type alias before validation.
-	 *
-	 * @dataProvider legacy_field_type_aliases
-	 *
-	 * @param string $legacy_type Legacy field type.
-	 * @param string $canonical_type Canonical field type.
+	 * @testdox It accepts choice fields with missing or empty option lists.
 	 */
-	public function test_from_legacy_settings_normalizes_aliases_before_validation( string $legacy_type, string $canonical_type ): void {
-		$schema = SettingsUISchema::from_legacy_settings(
-			'acme',
-			'',
-			'Acme',
+	public function test_assert_valid_schema_accepts_choice_fields_without_options(): void {
+		$fields = array(
 			array(
-				array(
-					'id'      => 'acme_field',
-					'label'   => 'Acme field',
-					'type'    => $legacy_type,
-					'value'   => 'a',
-					'options' => array( 'a' => 'Option A' ),
-				),
-			)
+				'id'    => 'acme_select_without_options',
+				'label' => 'Select without options',
+				'type'  => 'select',
+				'value' => '',
+				'save'  => array( 'adapter' => 'form_post' ),
+			),
+			array(
+				'id'      => 'acme_array_with_empty_options',
+				'label'   => 'Array with empty options',
+				'type'    => 'array',
+				'value'   => array(),
+				'options' => array(),
+				'save'    => array( 'adapter' => 'form_post' ),
+			),
 		);
 
-		$this->assertSame( $canonical_type, $schema['groups']['default']['fields'][0]['type'] );
-		SettingsUISchema::assert_valid_schema( $schema );
+		SettingsUISchema::assert_valid_schema( $this->get_native_schema_with_fields( $fields ) );
+		$this->addToAssertionCount( 1 );
 	}
 
 	/**
-	 * Legacy field type aliases.
-	 *
-	 * @return array<string, array{string, string}>
+	 * @testdox It accepts scalar custom attributes without interpreting renderer semantics.
 	 */
-	public static function legacy_field_type_aliases(): array {
-		return array(
-			'multiselect'            => array( 'multiselect', 'array' ),
-			'multi_select_countries' => array( 'multi_select_countries', 'array' ),
-			'single_select_country'  => array( 'single_select_country', 'select' ),
-			'single_select_page'     => array( 'single_select_page', 'select' ),
+	public function test_assert_valid_schema_accepts_scalar_custom_attributes_without_interpreting_renderer_semantics(): void {
+		$field = array(
+			'id'               => 'acme_custom_field',
+			'label'            => 'Acme custom field',
+			'type'             => 'acme/custom',
+			'value'            => '',
+			'customAttributes' => array(
+				'min'          => 'extension-defined',
+				'max'          => 10,
+				'step'         => 'any',
+				'data-enabled' => true,
+			),
+			'save'             => array( 'adapter' => 'form_post' ),
 		);
+
+		SettingsUISchema::assert_valid_schema( $this->get_native_schema_with_field( $field ) );
+		$this->addToAssertionCount( 1 );
 	}
 
 	/**
@@ -1751,19 +1991,25 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 	public static function invalid_schemas(): array {
 		$valid = self::get_valid_schema_for_validation();
 
-		$unknown_type                                        = $valid;
-		$unknown_type['groups']['main']['fields'][0]['type'] = 'custom';
-		$duplicate_id                                        = $valid;
-		$duplicate_id['groups']['main']['fields'][]          = $duplicate_id['groups']['main']['fields'][0];
-		$group_field_collision                               = $valid;
+		$empty_type                                        = $valid;
+		$empty_type['groups']['main']['fields'][0]['type'] = '';
+
+		$duplicate_id                               = $valid;
+		$duplicate_id['groups']['main']['fields'][] = $duplicate_id['groups']['main']['fields'][0];
+		$group_field_collision                      = $valid;
 		$group_field_collision['groups']['main']['fields'][0]['id'] = 'main';
 		$empty_schema_id                                        = $valid;
 		$empty_schema_id['id']                                  = '';
 		$malformed_group                                        = $valid;
 		$malformed_group['groups']['main']['fields']            = 'invalid';
-		$missing_options                                        = $valid;
-		$missing_options['groups']['main']['fields'][0]['type'] = 'select';
-		$invalid_option = $missing_options;
+		$invalid_options                                        = $valid;
+		$invalid_options['groups']['main']['fields'][0]['type'] = 'select';
+		$invalid_options['groups']['main']['fields'][0]['options'] = array( 'one' => 'One' );
+		$null_options                                        = $valid;
+		$null_options['groups']['main']['fields'][0]['type'] = 'select';
+		$null_options['groups']['main']['fields'][0]['options'] = null;
+		$invalid_option                                        = $valid;
+		$invalid_option['groups']['main']['fields'][0]['type'] = 'select';
 		$invalid_option['groups']['main']['fields'][0]['options'] = array(
 			array(
 				'label' => 'One',
@@ -1778,6 +2024,14 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 		$invalid_visibility['groups']['main']['fields'][0]['visibility'] = array( 'controller' => 'missing' );
 		$invalid_bound = $valid;
 		$invalid_bound['groups']['main']['fields'][0]['customAttributes'] = array( 'min' => 1 );
+		$invalid_field_value = $valid;
+		$invalid_field_value['groups']['main']['fields'][0]['value'] = array( 'tier' => 1 );
+		$invalid_custom_attributes                                   = $valid;
+		$invalid_custom_attributes['groups']['main']['fields'][0]['customAttributes'] = 'invalid';
+		$invalid_custom_attribute_value = $valid;
+		$invalid_custom_attribute_value['groups']['main']['fields'][0]['customAttributes'] = array( 'data-values' => array() );
+		$invalid_custom_attribute_float = $valid;
+		$invalid_custom_attribute_float['groups']['main']['fields'][0]['customAttributes'] = array( 'data-value' => INF );
 		$invalid_info                                        = $valid;
 		$invalid_info['groups']['main']['fields'][0]['type'] = 'info';
 		$invalid_shell                                       = $valid;
@@ -1793,7 +2047,7 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 		$invalid_badge['shell']['badges']                    = array(
 			array(
 				'label'  => 'Beta',
-				'intent' => 'purple',
+				'intent' => array( 'invalid' ),
 			),
 		);
 		$invalid_action                                      = $valid;
@@ -1813,21 +2067,26 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 		unset( $invalid_group_map['groups']['main'] );
 
 		return array(
-			'unknown field type'          => array( $unknown_type, 'Field "acme_field" has unsupported type "custom".' ),
+			'empty field type'            => array( $empty_type, 'Field "acme_field" type must be a non-empty string.' ),
 			'duplicate field id'          => array( $duplicate_id, 'Field id "acme_field" is duplicated.' ),
 			'group and field collision'   => array( $group_field_collision, 'Field id "main" collides with a group id.' ),
 			'empty schema id'             => array( $empty_schema_id, 'Schema id must be a non-empty string.' ),
 			'malformed group fields'      => array( $malformed_group, 'Group "main" fields must be a list.' ),
-			'missing choice options'      => array( $missing_options, 'Field "acme_field" of type "select" must define a non-empty options list.' ),
+			'non-list choice options'     => array( $invalid_options, 'Field "acme_field" options must be a list.' ),
+			'null choice options'         => array( $null_options, 'Field "acme_field" options must be a list.' ),
 			'non-string option value'     => array( $invalid_option, 'Field "acme_field" option 0 value must be a string.' ),
 			'empty component name'        => array( $invalid_component, 'Field "acme_field" component must be a non-empty string.' ),
 			'unsupported field save'      => array( $invalid_field_save, 'Field "acme_field" save adapter must be "form_post" or "none".' ),
 			'missing visibility control'  => array( $invalid_visibility, 'Field "acme_field" visibility controller "missing" does not reference a field.' ),
+			'invalid field value'         => array( $invalid_field_value, 'Field "acme_field" value is invalid for type "text".' ),
+			'invalid custom attributes'   => array( $invalid_custom_attributes, 'Field "acme_field" customAttributes must be a map.' ),
+			'invalid custom value'        => array( $invalid_custom_attribute_value, 'Field "acme_field" custom attribute "data-values" has an invalid value.' ),
+			'non-finite custom value'     => array( $invalid_custom_attribute_float, 'Field "acme_field" custom attribute "data-value" has an invalid value.' ),
 			'bound on text field'         => array( $invalid_bound, 'Field "acme_field" may define "min" only when its type is "number" or "integer".' ),
 			'saving info field'           => array( $invalid_info, 'Field "acme_field" of type "info" must use the "none" save adapter.' ),
 			'malformed shell navigation'  => array( $invalid_shell, 'Shell navigation item 0 href must be a string.' ),
 			'malformed breadcrumb'        => array( $invalid_breadcrumb, 'Shell breadcrumb 0 label must be a string.' ),
-			'invalid badge intent'        => array( $invalid_badge, 'Shell badge 0 intent "purple" is not supported.' ),
+			'invalid badge intent'        => array( $invalid_badge, 'Shell badge 0 intent must be a string.' ),
 			'empty group action id'       => array( $invalid_action, 'Group "main" action 0 id must be a non-empty string.' ),
 			'custom save without handler' => array( $invalid_page_save, 'Schema custom save strategy must define a non-empty handler.' ),
 			'empty navigation component'  => array( $invalid_navigation_component, 'Shell navigationComponent must be a non-empty string.' ),
@@ -1857,7 +2116,7 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 			'badges'              => array(
 				array(
 					'label'  => 'Beta',
-					'intent' => 'info',
+					'intent' => 'extension-defined-intent',
 				),
 			),
 			'navigation'          => array(
