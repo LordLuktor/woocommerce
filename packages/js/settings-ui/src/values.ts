@@ -9,6 +9,7 @@ import { date, getDate } from '@wordpress/date';
 import type { SettingsValue } from './types';
 
 const STORE_LOCAL_DATETIME_FORMAT = 'Y-m-d\\TH:i:s';
+const CANONICAL_DATETIME_FORMAT = 'Y-m-d\\TH:i:sP';
 
 type NormalizedDecimal = [ string, number ];
 
@@ -118,5 +119,5 @@ export const toCanonicalDateTime = ( value: string ): string | null => {
 		return null;
 	}
 
-	return getDate( value ).toISOString().replace( '.000Z', 'Z' );
+	return date( CANONICAL_DATETIME_FORMAT, getDate( value ) );
 };

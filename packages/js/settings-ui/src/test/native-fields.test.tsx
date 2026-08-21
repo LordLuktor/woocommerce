@@ -104,6 +104,13 @@ describe( 'NativeSettingsField', () => {
 		} );
 	};
 
+	const blurInput = ( input: HTMLInputElement ) => {
+		act( () => {
+			input.focus();
+			input.blur();
+		} );
+	};
+
 	const renderStatefulField = (
 		field: SettingsUIField,
 		initialValue: SettingsValue,
@@ -498,24 +505,91 @@ describe( 'NativeSettingsField', () => {
 			);
 		} );
 
-		it( 'emits null when a number is cleared', () => {
+		it( 'preserves draft text while typing and commits its canonical value on blur', () => {
+			const onChange = jest.fn();
+			const container = renderStatefulField( numberField, 5, onChange );
+			const input = container.querySelector( 'input[type="number"]' );
+
+			expect( input ).toBeInstanceOf( HTMLInputElement );
+			changeInput( input as HTMLInputElement, '10.0' );
+			expect( ( input as HTMLInputElement ).value ).toBe( '10.0' );
+			expect( onChange ).not.toHaveBeenCalled();
+
+			blurInput( input as HTMLInputElement );
+			expect( onChange ).toHaveBeenLastCalledWith( 10 );
+			expect( ( input as HTMLInputElement ).value ).toBe( '10' );
+		} );
+
+		it( 'syncs an external value change without resetting draft text on unrelated renders', () => {
+			const onChange = jest.fn();
+
+			const ExternallyControlledField = () => {
+				const [ value, setValue ] = useState< SettingsValue >( 5 );
+				const [ renderCount, setRenderCount ] = useState( 0 );
+
+				return (
+					<>
+						<button
+							onClick={ () => setRenderCount( renderCount + 1 ) }
+						>
+							Re-render
+						</button>
+						<button onClick={ () => setValue( 8 ) }>
+							Set external value
+						</button>
+						<NativeSettingsField
+							{ ...makeProps( numberField, value, onChange ) }
+						/>
+					</>
+				);
+			};
+
+			const container = render( <ExternallyControlledField /> );
+			const input = container.querySelector( 'input[type="number"]' );
+			const buttons = container.querySelectorAll( 'button' );
+
+			expect( input ).toBeInstanceOf( HTMLInputElement );
+			changeInput( input as HTMLInputElement, '10.0' );
+			clickButton( buttons[ 0 ] );
+			expect( ( input as HTMLInputElement ).value ).toBe( '10.0' );
+
+			clickButton( buttons[ 1 ] );
+			expect( ( input as HTMLInputElement ).value ).toBe( '8' );
+			expect( onChange ).not.toHaveBeenCalled();
+		} );
+
+		it( 'commits null on blur when a number is cleared', () => {
 			const onChange = jest.fn();
 			const container = renderStatefulField( numberField, 5, onChange );
 			const input = container.querySelector( 'input[type="number"]' );
 
 			expect( input ).toBeInstanceOf( HTMLInputElement );
 			changeInput( input as HTMLInputElement, '' );
+			expect( onChange ).not.toHaveBeenCalled();
+			blurInput( input as HTMLInputElement );
 			expect( onChange ).toHaveBeenLastCalledWith( null );
 		} );
 
-		it( 'emits null for an unsafe integral number', () => {
+		it( 'shows an accessible error and does not commit an unsafe number', () => {
 			const onChange = jest.fn();
 			const container = renderStatefulField( numberField, 5, onChange );
 			const input = container.querySelector( 'input[type="number"]' );
 
 			expect( input ).toBeInstanceOf( HTMLInputElement );
 			changeInput( input as HTMLInputElement, '9007199254740992' );
-			expect( onChange ).toHaveBeenLastCalledWith( null );
+			blurInput( input as HTMLInputElement );
+
+			expect( onChange ).not.toHaveBeenCalled();
+			expect( input ).toHaveAttribute( 'aria-invalid', 'true' );
+			expect( ( input as HTMLInputElement ).checkValidity() ).toBe(
+				false
+			);
+			const error = container.querySelector( '#wc_test_number__error' );
+			expect( error ).toHaveAttribute( 'role', 'alert' );
+			expect( error ).toHaveTextContent( 'Enter a valid number.' );
+			expect( input?.getAttribute( 'aria-describedby' ) ).toContain(
+				'wc_test_number__error'
+			);
 		} );
 
 		it( 'rejects decimal values that change during canonicalization', () => {
@@ -556,7 +630,10 @@ describe( 'NativeSettingsField', () => {
 			expect( onChange ).toHaveBeenLastCalledWith( 3 );
 		} );
 
-		it( 'emits null for fractional or unsafe integer input', () => {
+		it.each( [
+			[ 'fractional', '2.5' ],
+			[ 'unsafe', '9007199254740992' ],
+		] )( 'does not commit %s integer input', ( _case, nextValue ) => {
 			const onChange = jest.fn();
 			const container = renderStatefulField(
 				{
@@ -570,11 +647,14 @@ describe( 'NativeSettingsField', () => {
 			const input = container.querySelector( 'input[type="number"]' );
 
 			expect( input ).toBeInstanceOf( HTMLInputElement );
-			changeInput( input as HTMLInputElement, '2.5' );
-			changeInput( input as HTMLInputElement, '9007199254740992' );
-			expect( onChange.mock.calls.map( ( [ value ] ) => value ) ).toEqual(
-				[ null, null ]
-			);
+			changeInput( input as HTMLInputElement, nextValue );
+			blurInput( input as HTMLInputElement );
+
+			expect( onChange ).not.toHaveBeenCalled();
+			expect( input ).toHaveAttribute( 'aria-invalid', 'true' );
+			expect(
+				container.querySelector( '#wc_test_integer__error' )
+			).toHaveTextContent( 'Enter a valid whole number.' );
 		} );
 	} );
 
@@ -615,7 +695,7 @@ describe( 'NativeSettingsField', () => {
 			}
 		);
 
-		it( 'displays canonical ISO state as local wall time and emits ISO or null', () => {
+		it( 'displays canonical state as local wall time and emits a store-timezone offset', () => {
 			setDateSettings( {
 				...originalDateSettings,
 				timezone: {
@@ -643,7 +723,7 @@ describe( 'NativeSettingsField', () => {
 			expect( input ).toHaveValue( '2026-01-01T12:30' );
 			changeInput( input as HTMLInputElement, '2026-01-01T13:45:00' );
 			expect( onChange ).toHaveBeenLastCalledWith(
-				'2026-01-01T18:45:00Z'
+				'2026-01-01T13:45:00-05:00'
 			);
 			changeInput( input as HTMLInputElement, '' );
 			expect( onChange ).toHaveBeenLastCalledWith( null );

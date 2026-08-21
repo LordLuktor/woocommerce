@@ -6,6 +6,7 @@ import { createElement, Fragment } from '@wordpress/element';
 /**
  * Internal dependencies
  */
+import { error } from './diagnostics';
 import type { SettingsUIField, SettingsValue } from './types';
 import { areSettingsValuesEqual, toStoreLocalDateTime } from './values';
 
@@ -69,10 +70,24 @@ const serializeOriginalFormValue = (
 		? toRepeatedInputs( name, value )
 		: [ { name, value } ];
 
+const handleUnsupportedField = (
+	message: string,
+	field: SettingsUIField,
+	strict: boolean
+): HiddenInput[] => {
+	if ( strict ) {
+		throw new Error( message );
+	}
+
+	error( message, { field } );
+	return [];
+};
+
 export const getHiddenInputs = (
 	field: SettingsUIField,
 	value: SettingsValue,
-	initialCanonicalValue: SettingsValue = value
+	initialCanonicalValue?: SettingsValue,
+	{ strict = false }: { strict?: boolean } = {}
 ): HiddenInput[] => {
 	const adapter = field.save?.adapter || 'form_post';
 
@@ -81,18 +96,27 @@ export const getHiddenInputs = (
 	}
 
 	if ( adapter !== 'form_post' ) {
-		throw new Error( `Save adapter "${ adapter }" is not supported.` );
+		return handleUnsupportedField(
+			`Save adapter "${ adapter }" is not supported.`,
+			field,
+			strict
+		);
 	}
 
 	const name = getFieldName( field );
 
 	if ( ! isSupportedFieldName( name, field.type === 'array' ) ) {
-		throw new Error( `Form-post field name "${ name }" is not supported.` );
+		return handleUnsupportedField(
+			`Form-post field name "${ name }" is not supported.`,
+			field,
+			strict
+		);
 	}
 
 	if (
 		field.save &&
 		Object.prototype.hasOwnProperty.call( field.save, 'initialValue' ) &&
+		typeof initialCanonicalValue !== 'undefined' &&
 		areSettingsValuesEqual( value, initialCanonicalValue )
 	) {
 		return serializeOriginalFormValue(
@@ -108,21 +132,23 @@ export const HiddenInputs = ( {
 	field,
 	value,
 	initialCanonicalValue,
+	strict = false,
 }: {
 	field: SettingsUIField;
 	value: SettingsValue;
 	initialCanonicalValue?: SettingsValue;
+	strict?: boolean;
 } ) => (
 	<>
-		{ getHiddenInputs( field, value, initialCanonicalValue ).map(
-			( input, index ) => (
-				<input
-					key={ `${ input.name }-${ index }` }
-					type="hidden"
-					name={ input.name }
-					value={ input.value }
-				/>
-			)
-		) }
+		{ getHiddenInputs( field, value, initialCanonicalValue, {
+			strict,
+		} ).map( ( input, index ) => (
+			<input
+				key={ `${ input.name }-${ index }` }
+				type="hidden"
+				name={ input.name }
+				value={ input.value }
+			/>
+		) ) }
 	</>
 );

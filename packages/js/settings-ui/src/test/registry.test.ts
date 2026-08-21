@@ -92,6 +92,39 @@ describe( 'settings extension registry', () => {
 		).toBe( fieldOverride );
 	} );
 
+	it( 'falls back to number type renderers for promoted integer fields', () => {
+		const numberRenderer: SettingsFieldComponent = () => null;
+		const integerRenderer: SettingsFieldComponent = () => null;
+		const field = {
+			id: 'legacy_number',
+			label: 'Legacy number',
+			type: 'integer',
+		};
+		const context = { page: 'registry-integer-fallback' };
+
+		registerSettingsExtension( {
+			scope: context,
+			typeRenderers: {
+				number: numberRenderer,
+			},
+		} );
+
+		expect( resolveFieldComponent( field, context ) ).toBe(
+			numberRenderer
+		);
+
+		registerSettingsExtension( {
+			scope: context,
+			typeRenderers: {
+				integer: integerRenderer,
+			},
+		} );
+
+		expect( resolveFieldComponent( field, context ) ).toBe(
+			integerRenderer
+		);
+	} );
+
 	it( 'preserves resolver fallbacks when an explicit component is missing', () => {
 		const fieldOverride: SettingsFieldComponent = () => null;
 		const typeRenderer: SettingsFieldComponent = () => null;

@@ -90,6 +90,11 @@ const getChangedValues = (
 const getFieldTypeClassName = ( type: string ) =>
 	`wc-settings-ui__field--${ type.replace( /[^a-z0-9_-]/gi, '-' ) }`;
 
+const getFieldTypeClassNames = ( type: string ) => [
+	getFieldTypeClassName( type ),
+	...( type === 'integer' ? [ getFieldTypeClassName( 'number' ) ] : [] ),
+];
+
 const getActionVariant = ( variant?: string ) =>
 	( [ 'primary', 'secondary', 'tertiary', 'link' ].includes( variant || '' )
 		? variant
@@ -933,7 +938,7 @@ export const SettingsUIPage = ( {
 										<div
 											className={ [
 												'wc-settings-ui__field',
-												getFieldTypeClassName(
+												...getFieldTypeClassNames(
 													field.type
 												),
 											].join( ' ' ) }
@@ -974,6 +979,7 @@ export const SettingsUIPage = ( {
 							field={ field }
 							value={ values[ field.id ] }
 							initialCanonicalValue={ initialValues[ field.id ] }
+							strict
 							key={ field.id }
 						/>
 					) ) }

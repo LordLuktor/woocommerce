@@ -78,6 +78,13 @@ class SettingsUISchema {
 	private const JAVASCRIPT_SAFE_INTEGER = '9007199254740991';
 
 	/**
+	 * HTML decimal-number grammar with captures for exact normalization.
+	 *
+	 * @var string
+	 */
+	private const DECIMAL_PATTERN = '/^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/';
+
+	/**
 	 * Build a schema from a legacy WC settings array.
 	 *
 	 * @since 10.9.0
@@ -544,6 +551,11 @@ class SettingsUISchema {
 				case 'datetime-local':
 					$field['value'] = self::canonicalize_datetime( $field['value'], $field['id'] );
 					break;
+				default:
+					if ( in_array( $type, self::SUPPORTED_FIELD_TYPES, true ) && ( null === $field['value'] || is_scalar( $field['value'] ) ) && ! is_string( $field['value'] ) ) {
+						$field['value'] = null === $field['value'] ? '' : self::to_canonical_string( $field['value'] );
+					}
+					break;
 			}
 		}
 
@@ -723,7 +735,7 @@ class SettingsUISchema {
 		}
 
 		$value = trim( $value );
-		if ( ! preg_match( '/^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/', $value, $matches ) ) {
+		if ( ! preg_match( self::DECIMAL_PATTERN, $value, $matches ) ) {
 			return null;
 		}
 
@@ -814,7 +826,7 @@ class SettingsUISchema {
 	 * @return bool
 	 */
 	private static function is_decimal_number( string $value ): bool {
-		return 1 === preg_match( '/^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?$/', $value );
+		return 1 === preg_match( self::DECIMAL_PATTERN, $value );
 	}
 
 	/**
@@ -849,7 +861,7 @@ class SettingsUISchema {
 	 * @return array{string, int}|null Normalized signed digits and power, or null when invalid.
 	 */
 	private static function normalize_decimal_string( string $value ): ?array {
-		if ( ! preg_match( '/^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/', $value, $matches ) ) {
+		if ( ! preg_match( self::DECIMAL_PATTERN, $value, $matches ) ) {
 			return null;
 		}
 
@@ -892,9 +904,20 @@ class SettingsUISchema {
 		}
 
 		foreach ( array( 'min', 'max' ) as $bound ) {
-			$has_attribute  = array_key_exists( $bound, $attributes );
-			$has_validation = array_key_exists( $bound, $validation );
+			$has_attribute    = array_key_exists( $bound, $attributes );
+			$has_validation   = array_key_exists( $bound, $validation );
+			$empty_validation = $has_validation && is_string( $validation[ $bound ] ) && '' === trim( $validation[ $bound ] );
+
+			if ( $has_attribute && is_string( $attributes[ $bound ] ) && '' === trim( $attributes[ $bound ] ) ) {
+				unset( $attributes[ $bound ] );
+				$has_attribute = false;
+			}
+			if ( $empty_validation ) {
+				unset( $validation[ $bound ] );
+				$has_validation = false;
+			}
 			if ( ! $has_attribute && ! $has_validation ) {
+				$converted = $converted || $empty_validation;
 				continue;
 			}
 
@@ -911,16 +934,20 @@ class SettingsUISchema {
 			$validation[ $bound ] = $canonical;
 			$attributes[ $bound ] = $canonical;
 			$converted            = $converted ||
-				( $has_attribute && ! $has_validation ) ||
-				( $has_attribute && $original_attribute !== $attribute_value ) ||
+				$empty_validation ||
+				( $has_attribute && $has_validation && $original_attribute !== $attribute_value ) ||
 				( $has_validation && $original_validation !== $validation_value );
 		}
 
 		if ( ! empty( $validation ) ) {
 			$field['validation'] = $validation;
+		} else {
+			unset( $field['validation'] );
 		}
 		if ( ! empty( $attributes ) ) {
 			$field['customAttributes'] = $attributes;
+		} else {
+			unset( $field['customAttributes'] );
 		}
 
 		return $converted;
@@ -1016,7 +1043,7 @@ class SettingsUISchema {
 				}
 
 				if ( ! self::is_form_value_for_field( $original, $field ) ) {
-					throw self::invalid_schema( sprintf( 'Field "%s" must define save.initialValue before its native form value can be converted.', $field['id'] ) );
+					throw self::invalid_schema( sprintf( 'Field "%s" must define save.initialValue because its original value cannot be replayed safely through classic form-post semantics.', $field['id'] ) );
 				}
 
 				if ( ! isset( $field['save'] ) || ! is_array( $field['save'] ) ) {
@@ -1050,8 +1077,8 @@ class SettingsUISchema {
 	}
 
 	/**
-	 * Whether a form value preserves the canonical field value through the
-	 * classic save pipeline.
+	 * Whether a value can be replayed safely for a field through classic
+	 * form-post semantics.
 	 *
 	 * @param mixed $value Candidate form value.
 	 * @param array $field Canonical field definition.
@@ -1325,20 +1352,11 @@ class SettingsUISchema {
 			$field_name = substr( $field_name, 0, -2 );
 		}
 
-		if ( false === strpos( $field_name, '[' ) && false === strpos( $field_name, ']' ) ) {
-			return get_option( $field_name, $default );
-		}
-
-		if ( ! preg_match( '/^([^\[\]]+)\[([^\[\]]+)\]$/', $field_name, $matches ) ) {
+		if ( ! self::is_supported_form_post_name( $field_name, false ) ) {
 			throw self::invalid_schema( sprintf( 'Legacy form-post field "%s" may use only one bracketed setting name.', $field_name ) );
 		}
 
-		$option = get_option( $matches[1], array() );
-		if ( ! is_array( $option ) ) {
-			throw self::invalid_schema( sprintf( 'Legacy form-post field "%s" option value must be an array.', $field_name ) );
-		}
-
-		return array_key_exists( $matches[2], $option ) ? $option[ $matches[2] ] : $default;
+		return woocommerce_settings_get_option( $field_name, $default );
 	}
 
 	/**
@@ -1357,7 +1375,7 @@ class SettingsUISchema {
 			return array( 'adapter' => 'none' );
 		}
 
-		$field_name = isset( $setting['field_name'] ) && is_scalar( $setting['field_name'] )
+		$field_name = isset( $setting['field_name'] ) && is_scalar( $setting['field_name'] ) && '' !== (string) $setting['field_name']
 			? (string) $setting['field_name']
 			: (string) $setting['id'];
 
@@ -2018,7 +2036,7 @@ class SettingsUISchema {
 			}
 
 			if ( ! self::is_form_value_for_field( $save['initialValue'], $field ) ) {
-				throw self::invalid_schema( sprintf( 'Field "%s" save.initialValue must preserve its canonical value through classic form-post semantics.', $field['id'] ) );
+				throw self::invalid_schema( sprintf( 'Field "%s" save.initialValue cannot be replayed safely through classic form-post semantics.', $field['id'] ) );
 			}
 		}
 

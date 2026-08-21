@@ -18,11 +18,7 @@ import { warn } from './diagnostics';
 import { sanitizeSettingsHtml } from './html';
 import { NumberSpinControl } from './number-spin-control';
 import type { SettingsFieldComponentProps, SettingsValue } from './types';
-import {
-	toCanonicalDateTime,
-	toCanonicalNumberValue,
-	toStoreLocalDateTime,
-} from './values';
+import { toCanonicalDateTime, toStoreLocalDateTime } from './values';
 
 type TextInputType =
 	| 'text'
@@ -236,14 +232,8 @@ export const NativeSettingsField = ( {
 				value={ toStringValue( value ) }
 				placeholder={ field.placeholder ?? numberInput.placeholder }
 				disabled={ field.disabled ?? numberInput.disabled }
-				onChange={ ( nextValue ) =>
-					onChange(
-						toCanonicalNumberValue(
-							nextValue,
-							field.type === 'integer'
-						)
-					)
-				}
+				integerOnly={ field.type === 'integer' }
+				onChange={ onChange }
 				inputAttributes={ numberInput.inputAttributes }
 			/>
 		);

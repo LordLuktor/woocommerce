@@ -27,6 +27,9 @@ describe( 'getHiddenInputs', () => {
 				true
 			)
 		).toEqual( [ { name: 'enabled', value: 'yes' } ] );
+	} );
+
+	it( 'serializes changed checkbox values instead of their original form representation', () => {
 		expect(
 			getHiddenInputs(
 				{
@@ -76,19 +79,83 @@ describe( 'getHiddenInputs', () => {
 		).toEqual( [] );
 	} );
 
-	it( 'fails closed for unsupported save adapters', () => {
-		expect( () =>
-			getHiddenInputs(
-				{
-					id: 'quantity',
-					label: 'Quantity',
-					type: 'number',
-					save: { adapter: 'custom', name: 'quantity' },
-				},
-				2
-			)
-		).toThrow( 'Save adapter "custom" is not supported.' );
+	it( 'serializes the current value in a two-argument call even when an original form value exists', () => {
+		const field = formPostField( {
+			save: {
+				adapter: 'form_post',
+				name: 'quantity',
+				initialValue: '02',
+			},
+		} );
+
+		expect( getHiddenInputs( field, 2 ) ).toEqual( [
+			{ name: 'quantity', value: '2' },
+		] );
 	} );
+
+	it.each( [
+		{
+			label: 'save adapter',
+			field: formPostField( {
+				save: { adapter: 'custom', name: 'quantity' },
+			} ),
+			message: 'Save adapter "custom" is not supported.',
+		},
+		{
+			label: 'form-post field name',
+			field: formPostField( {
+				save: {
+					adapter: 'form_post',
+					name: 'settings[group][quantity]',
+				},
+			} ),
+			message:
+				'Form-post field name "settings[group][quantity]" is not supported.',
+		},
+	] )(
+		'handles an unsupported $label gracefully by default',
+		( { field, message } ) => {
+			const consoleError = jest
+				.spyOn( console, 'error' )
+				.mockImplementation( () => undefined );
+
+			expect( getHiddenInputs( field, 2, 1 ) ).toEqual( [] );
+			expect( consoleError ).toHaveBeenCalledWith(
+				`[WooCommerce settings UI] ${ message }`,
+				{ field }
+			);
+
+			consoleError.mockRestore();
+		}
+	);
+
+	it.each( [
+		{
+			label: 'save adapter',
+			field: formPostField( {
+				save: { adapter: 'custom', name: 'quantity' },
+			} ),
+			message: 'Save adapter "custom" is not supported.',
+		},
+		{
+			label: 'form-post field name',
+			field: formPostField( {
+				save: {
+					adapter: 'form_post',
+					name: 'settings[group][quantity]',
+				},
+			} ),
+			message:
+				'Form-post field name "settings[group][quantity]" is not supported.',
+		},
+	] )(
+		'throws for an unsupported $label in strict mode',
+		( { field, message } ) => {
+			expect( () =>
+				getHiddenInputs( field, 2, 1, { strict: true } )
+			).toThrow( message );
+		}
+	);
 
 	it( 'preserves the original form representation while the canonical value is unchanged', () => {
 		const field = formPostField( {
@@ -102,9 +169,31 @@ describe( 'getHiddenInputs', () => {
 		expect( getHiddenInputs( field, 2, 2 ) ).toEqual( [
 			{ name: 'quantity', value: '02' },
 		] );
+	} );
+
+	it( 'serializes an edited canonical value', () => {
+		const field = formPostField( {
+			save: {
+				adapter: 'form_post',
+				name: 'quantity',
+				initialValue: '02',
+			},
+		} );
+
 		expect( getHiddenInputs( field, 3, 2 ) ).toEqual( [
 			{ name: 'quantity', value: '3' },
 		] );
+	} );
+
+	it( 'serializes a cleared canonical number as an empty string', () => {
+		const field = formPostField( {
+			save: {
+				adapter: 'form_post',
+				name: 'quantity',
+				initialValue: '02',
+			},
+		} );
+
 		expect( getHiddenInputs( field, null, 2 ) ).toEqual( [
 			{ name: 'quantity', value: '' },
 		] );
@@ -141,7 +230,7 @@ describe( 'getHiddenInputs', () => {
 		}
 	);
 
-	it( 'serializes flat and one-level nested names and fails closed for deeper names', () => {
+	it( 'serializes one-level nested names', () => {
 		expect(
 			getHiddenInputs(
 				formPostField( {
@@ -154,23 +243,9 @@ describe( 'getHiddenInputs', () => {
 				1
 			)
 		).toEqual( [ { name: 'settings[quantity]', value: '2' } ] );
-		expect( () =>
-			getHiddenInputs(
-				formPostField( {
-					save: {
-						adapter: 'form_post',
-						name: 'settings[group][quantity]',
-					},
-				} ),
-				2,
-				1
-			)
-		).toThrow(
-			'Form-post field name "settings[group][quantity]" is not supported.'
-		);
 	} );
 
-	it( 'keeps array entries bracketed for one-level nested names', () => {
+	it( 'preserves original array entries with bracketed one-level nested names', () => {
 		expect(
 			getHiddenInputs(
 				formPostField( {
@@ -188,6 +263,9 @@ describe( 'getHiddenInputs', () => {
 			{ name: 'settings[methods][]', value: 'card' },
 			{ name: 'settings[methods][]', value: 'link' },
 		] );
+	} );
+
+	it( 'serializes current array entries with existing bracketed one-level nested names', () => {
 		expect(
 			getHiddenInputs(
 				formPostField( {
@@ -209,6 +287,9 @@ describe( 'getHiddenInputs', () => {
 		expect(
 			getHiddenInputs( formPostField( { disabled: true } ), 2, 1 )
 		).toEqual( [ { name: 'quantity', value: '2' } ] );
+	} );
+
+	it( 'keeps hidden fields in the form-post entry list', () => {
 		expect(
 			getHiddenInputs(
 				formPostField( {
@@ -220,7 +301,7 @@ describe( 'getHiddenInputs', () => {
 		).toEqual( [ { name: 'quantity', value: '2' } ] );
 	} );
 
-	it( 'serializes edited canonical datetimes back to store-local form', () => {
+	it( 'preserves the original form representation for an unchanged canonical datetime', () => {
 		expect(
 			getHiddenInputs(
 				formPostField( {
@@ -235,6 +316,9 @@ describe( 'getHiddenInputs', () => {
 				'2026-01-01T12:00:00Z'
 			)
 		).toEqual( [ { name: 'starts_at', value: '2026-01-01T12:00' } ] );
+	} );
+
+	it( 'serializes an edited canonical datetime back to store-local form', () => {
 		expect(
 			getHiddenInputs(
 				formPostField( {

@@ -1112,6 +1112,48 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 	}
 
 	/**
+	 * @testdox It converts supported non-typed scalar and null values to strings.
+	 *
+	 * @dataProvider supported_scalar_values
+	 *
+	 * @param string $type Field type.
+	 * @param mixed  $value Raw field value.
+	 * @param string $expected Expected canonical value.
+	 */
+	public function test_canonicalize_schema_values_converts_supported_scalar_values( string $type, $value, string $expected ): void {
+		$this->setExpectedIncorrectUsage( SettingsUISchema::class . '::canonicalize_schema_values' );
+
+		$schema = SettingsUISchema::canonicalize_schema_values(
+			$this->get_native_schema_with_field(
+				array(
+					'id'    => 'acme_value',
+					'label' => 'Value',
+					'type'  => $type,
+					'value' => $value,
+					'save'  => array( 'adapter' => 'none' ),
+				)
+			)
+		);
+
+		$this->assertSame( $expected, $schema['groups']['main']['fields'][0]['value'] );
+		SettingsUISchema::assert_valid_schema( $schema );
+	}
+
+	/**
+	 * Supported scalar value fixtures.
+	 *
+	 * @return array<string, array{string, mixed, string}>
+	 */
+	public static function supported_scalar_values(): array {
+		return array(
+			'integer text'     => array( 'text', 12, '12' ),
+			'float textarea'   => array( 'textarea', 1.25, '1.25' ),
+			'boolean password' => array( 'password', false, 'false' ),
+			'null URL'         => array( 'url', null, '' ),
+		);
+	}
+
+	/**
 	 * @testdox It rejects decimal values that change during numeric canonicalization.
 	 *
 	 * @dataProvider lossy_decimal_values
@@ -1187,10 +1229,15 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 
 	/**
 	 * @testdox It rejects unsafe integral bounds before converting them to floats.
+	 *
+	 * @dataProvider unsafe_integral_bounds
+	 *
+	 * @param string $bound Bound name.
+	 * @param string $value Unsafe bound value.
 	 */
-	public function test_canonicalize_schema_values_rejects_unsafe_integral_bounds(): void {
+	public function test_canonicalize_schema_values_rejects_unsafe_integral_bounds( string $bound, string $value ): void {
 		$this->expectException( \InvalidArgumentException::class );
-		$this->expectExceptionMessage( 'max is outside the JavaScript safe integer range' );
+		$this->expectExceptionMessage( $bound . ' is outside the JavaScript safe integer range' );
 
 		SettingsUISchema::canonicalize_schema_values(
 			$this->get_native_schema_with_field(
@@ -1199,10 +1246,22 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 					'label'            => 'Number',
 					'type'             => 'number',
 					'value'            => 2,
-					'customAttributes' => array( 'max' => '9007199254740992' ),
+					'customAttributes' => array( $bound => $value ),
 					'save'             => array( 'adapter' => 'custom' ),
 				)
 			)
+		);
+	}
+
+	/**
+	 * Unsafe integral bound fixtures.
+	 *
+	 * @return array<string, array{string, string}>
+	 */
+	public static function unsafe_integral_bounds(): array {
+		return array(
+			'above maximum' => array( 'max', '9007199254740992' ),
+			'below minimum' => array( 'min', '-9007199254740992' ),
 		);
 	}
 
@@ -1372,6 +1431,95 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 		$field = $schema['groups']['default']['fields'][0];
 		$this->assertSame( 2, $field['value'] );
 		$this->assertSame( '02', $field['save']['initialValue'] );
+	}
+
+	/**
+	 * @testdox It falls back to the field default when a nested option parent is not an array.
+	 */
+	public function test_from_legacy_settings_falls_back_for_non_array_nested_option_parent(): void {
+		update_option( 'acme_settings', 'not-an-array' );
+
+		try {
+			$schema = SettingsUISchema::from_legacy_settings(
+				'acme',
+				'',
+				'Acme',
+				array(
+					array(
+						'id'         => 'acme_quantity',
+						'field_name' => 'acme_settings[quantity]',
+						'label'      => 'Quantity',
+						'type'       => 'text',
+						'default'    => 'fallback',
+					),
+				)
+			);
+		} finally {
+			delete_option( 'acme_settings' );
+		}
+
+		$field = $schema['groups']['default']['fields'][0];
+		$this->assertSame( 'fallback', $field['value'] );
+		$this->assertSame( 'fallback', $field['save']['initialValue'] );
+	}
+
+	/**
+	 * @testdox It uses the classic settings reader's unslash behavior.
+	 */
+	public function test_from_legacy_settings_unslashes_nested_option_values(): void {
+		update_option( 'acme_settings', array( 'copy' => "It\\'s ready" ) );
+
+		try {
+			$schema = SettingsUISchema::from_legacy_settings(
+				'acme',
+				'',
+				'Acme',
+				array(
+					array(
+						'id'         => 'acme_copy',
+						'field_name' => 'acme_settings[copy]',
+						'label'      => 'Copy',
+						'type'       => 'text',
+					),
+				)
+			);
+		} finally {
+			delete_option( 'acme_settings' );
+		}
+
+		$field = $schema['groups']['default']['fields'][0];
+		$this->assertSame( 'It\'s ready', $field['value'] );
+		$this->assertSame( 'It\'s ready', $field['save']['initialValue'] );
+	}
+
+	/**
+	 * @testdox It falls back to the field ID when field_name is an empty scalar.
+	 */
+	public function test_from_legacy_settings_uses_id_for_empty_field_name(): void {
+		update_option( 'acme_quantity', 'from-id' );
+
+		try {
+			$schema = SettingsUISchema::from_legacy_settings(
+				'acme',
+				'',
+				'Acme',
+				array(
+					array(
+						'id'         => 'acme_quantity',
+						'field_name' => '',
+						'label'      => 'Quantity',
+						'type'       => 'text',
+					),
+				)
+			);
+		} finally {
+			delete_option( 'acme_quantity' );
+		}
+
+		$field = $schema['groups']['default']['fields'][0];
+		$this->assertSame( 'acme_quantity', $field['save']['name'] );
+		$this->assertSame( 'from-id', $field['value'] );
+		$this->assertSame( 'from-id', $field['save']['initialValue'] );
 	}
 
 	/**
@@ -1650,6 +1798,63 @@ class SettingsUISchemaTest extends WC_Unit_Test_Case {
 		$field     = $canonical['groups']['main']['fields'][0];
 
 		$this->assertSame( $field['validation'], $field['customAttributes'] );
+	}
+
+	/**
+	 * @testdox It silently mirrors legacy numeric custom attributes into validation metadata.
+	 */
+	public function test_canonicalize_schema_values_silently_mirrors_legacy_numeric_attributes(): void {
+		$schema = $this->get_native_schema_with_field(
+			array(
+				'id'               => 'acme_number',
+				'label'            => 'Number',
+				'type'             => 'number',
+				'value'            => 1.5,
+				'customAttributes' => array(
+					'min' => '0.5',
+					'max' => '2.5',
+				),
+				'save'             => array( 'adapter' => 'none' ),
+			)
+		);
+
+		$canonical = SettingsUISchema::canonicalize_schema_values( $schema );
+		$field     = $canonical['groups']['main']['fields'][0];
+		$bounds    = array(
+			'min' => 0.5,
+			'max' => 2.5,
+		);
+
+		$this->assertSame( $bounds, $field['customAttributes'] );
+		$this->assertSame( $bounds, $field['validation'] );
+		SettingsUISchema::assert_valid_schema( $canonical );
+	}
+
+	/**
+	 * @testdox It treats empty numeric min and max attributes as absent.
+	 */
+	public function test_canonicalize_schema_values_omits_empty_numeric_bounds(): void {
+		$schema = $this->get_native_schema_with_field(
+			array(
+				'id'               => 'acme_number',
+				'label'            => 'Number',
+				'type'             => 'number',
+				'value'            => 1.5,
+				'customAttributes' => array(
+					'min'  => '',
+					'max'  => '   ',
+					'step' => 'any',
+				),
+				'save'             => array( 'adapter' => 'none' ),
+			)
+		);
+
+		$canonical = SettingsUISchema::canonicalize_schema_values( $schema );
+		$field     = $canonical['groups']['main']['fields'][0];
+
+		$this->assertSame( array( 'step' => 'any' ), $field['customAttributes'] );
+		$this->assertArrayNotHasKey( 'validation', $field );
+		SettingsUISchema::assert_valid_schema( $canonical );
 	}
 
 	/**

@@ -336,6 +336,26 @@ describe( 'settings HTML rendering', () => {
 		container.remove();
 	} );
 
+	it( 'keeps the number CSS hook for promoted integer fields', () => {
+		const schema = createSingleFieldSchema( {
+			id: 'test_integer',
+			label: 'Test integer',
+			type: 'integer',
+			value: 2,
+		} );
+
+		const { container, root } = renderElement(
+			<SettingsUIPage schema={ schema } />
+		);
+		const field = container.querySelector( '.wc-settings-ui__field' );
+
+		expect( field ).toHaveClass( 'wc-settings-ui__field--integer' );
+		expect( field ).toHaveClass( 'wc-settings-ui__field--number' );
+
+		act( () => root.unmount() );
+		container.remove();
+	} );
+
 	it( 'fails closed and focuses the error region for an unrenderable type', () => {
 		jest.spyOn( console, 'error' ).mockImplementation( () => undefined );
 		const schema = createSingleFieldSchema( {

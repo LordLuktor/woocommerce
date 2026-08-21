@@ -3,9 +3,14 @@
  */
 import { speak } from '@wordpress/a11y';
 import { BaseControl, Button } from '@wordpress/components';
-import { createElement } from '@wordpress/element';
+import { createElement, useEffect, useRef, useState } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import type { ReactNode } from 'react';
+
+/**
+ * Internal dependencies
+ */
+import { toCanonicalNumberValue } from './values';
 
 export type NumberSpinControlProps = {
 	id: string;
@@ -14,7 +19,8 @@ export type NumberSpinControlProps = {
 	value: string;
 	placeholder?: string;
 	disabled?: boolean;
-	onChange: ( next: string ) => void;
+	integerOnly?: boolean;
+	onChange: ( next: number | null ) => void;
 	inputAttributes?: Record< string, string | number | boolean >;
 };
 
@@ -92,9 +98,20 @@ export const NumberSpinControl = ( {
 	value,
 	placeholder,
 	disabled,
+	integerOnly = false,
 	onChange,
 	inputAttributes,
 }: NumberSpinControlProps ) => {
+	const [ draftValue, setDraftValue ] = useState( value );
+	const [ error, setError ] = useState< string | undefined >();
+	const inputRef = useRef< HTMLInputElement >( null );
+
+	useEffect( () => {
+		setDraftValue( value );
+		setError( undefined );
+		inputRef.current?.setCustomValidity( '' );
+	}, [ value ] );
+
 	const min = toFiniteNumber( inputAttributes?.min );
 	const max = toFiniteNumber( inputAttributes?.max );
 	const parsedStep = toFiniteNumber( inputAttributes?.step );
@@ -102,9 +119,50 @@ export const NumberSpinControl = ( {
 	// fall back to 1 like the native number input does for an invalid step.
 	const step =
 		typeof parsedStep === 'number' && parsedStep > 0 ? parsedStep : 1;
-	const current = toFiniteNumber( value );
+	const current = toCanonicalNumberValue( draftValue, integerOnly );
+	const errorId = `${ id }__error`;
+	const describedBy = [
+		help ? `${ id }__help` : undefined,
+		error ? errorId : undefined,
+	]
+		.filter( Boolean )
+		.join( ' ' );
+
+	const showInvalidValueError = () => {
+		const message = integerOnly
+			? __( 'Enter a valid whole number.', 'woocommerce' )
+			: __( 'Enter a valid number.', 'woocommerce' );
+
+		setError( message );
+		inputRef.current?.setCustomValidity( message );
+	};
+
+	const commitDraft = () => {
+		if ( draftValue.trim() === '' ) {
+			setDraftValue( '' );
+			setError( undefined );
+			inputRef.current?.setCustomValidity( '' );
+			onChange( null );
+			return;
+		}
+
+		if ( current === null ) {
+			showInvalidValueError();
+			return;
+		}
+
+		setDraftValue( String( current ) );
+		setError( undefined );
+		inputRef.current?.setCustomValidity( '' );
+		onChange( current );
+	};
 
 	const stepBy = ( direction: 1 | -1 ) => {
+		if ( draftValue.trim() !== '' && current === null ) {
+			showInvalidValueError();
+			return;
+		}
+
 		let next = ( current ?? 0 ) + direction * step;
 
 		if ( typeof min !== 'undefined' ) {
@@ -130,22 +188,28 @@ export const NumberSpinControl = ( {
 				? String( next )
 				: String( Number( next.toFixed( precision ) ) );
 
-		onChange( nextValue );
+		const canonicalNext = toCanonicalNumberValue( nextValue, integerOnly );
+		if ( canonicalNext === null ) {
+			showInvalidValueError();
+			return;
+		}
+
+		const canonicalNextValue = String( canonicalNext );
+		setDraftValue( canonicalNextValue );
+		setError( undefined );
+		inputRef.current?.setCustomValidity( '' );
+		onChange( canonicalNext );
 		// Focus stays on the spin button while the input updates, so the
 		// new value must be announced to assistive technology explicitly.
-		speak( nextValue );
+		speak( canonicalNextValue );
 	};
 
 	const incrementDisabled =
 		disabled ||
-		( typeof max !== 'undefined' &&
-			typeof current !== 'undefined' &&
-			current >= max );
+		( typeof max !== 'undefined' && current !== null && current >= max );
 	const decrementDisabled =
 		disabled ||
-		( typeof min !== 'undefined' &&
-			typeof current !== 'undefined' &&
-			current <= min );
+		( typeof min !== 'undefined' && current !== null && current <= min );
 
 	const incrementLabel = label
 		? sprintf(
@@ -175,16 +239,21 @@ export const NumberSpinControl = ( {
 				     never override the controlled props below. */ }
 				<input
 					{ ...inputAttributes }
+					ref={ inputRef }
 					className="wc-settings-ui__number-control-input"
 					type="number"
 					id={ id }
-					value={ value }
+					value={ draftValue }
 					placeholder={ placeholder }
 					disabled={ disabled }
-					aria-describedby={ help ? `${ id }__help` : undefined }
-					onChange={ ( event ) =>
-						onChange( event.currentTarget.value )
-					}
+					aria-describedby={ describedBy || undefined }
+					aria-invalid={ error ? true : undefined }
+					onChange={ ( event ) => {
+						setDraftValue( event.currentTarget.value );
+						setError( undefined );
+						event.currentTarget.setCustomValidity( '' );
+					} }
+					onBlur={ commitDraft }
 				/>
 				<div className="wc-settings-ui__number-control-spin-buttons">
 					<Button
@@ -205,6 +274,15 @@ export const NumberSpinControl = ( {
 					/>
 				</div>
 			</div>
+			{ error ? (
+				<p
+					id={ errorId }
+					className="components-base-control__help"
+					role="alert"
+				>
+					{ error }
+				</p>
+			) : null }
 		</BaseControl>
 	);
 };
