@@ -1285,6 +1285,40 @@ class WC_AJAX_Test extends \WP_Ajax_UnitTestCase {
 	}
 
 	/**
+	 * @testdox remove_order_item rejects a negative quantity passed through the pre-delete save and deletes nothing.
+	 */
+	public function test_remove_order_item_rejects_negative_quantity_in_passthrough() {
+		$this->_setRole( 'administrator' );
+
+		$order        = \WC_Helper_Order::create_order();
+		$items        = array_values( $order->get_items() );
+		$item         = $items[0];
+		$item_id      = $item->get_id();
+		$original_qty = $item->get_quantity();
+
+		$_POST['order_id']       = $order->get_id();
+		$_POST['security']       = wp_create_nonce( 'order-item' );
+		$_POST['order_item_ids'] = array( $item_id );
+		$_POST['items']          = http_build_query(
+			array(
+				'order_item_id'  => array( $item_id ),
+				'order_item_qty' => array( $item_id => '-1' ),
+				'line_total'     => array( $item_id => '-10' ),
+				'line_subtotal'  => array( $item_id => '-10' ),
+			)
+		);
+
+		$response = $this->do_ajax( 'woocommerce_remove_order_item' );
+
+		$this->assertFalse( $response['success'] );
+		$this->assertStringContainsString( 'must be 0 or higher', $response['data']['error'] );
+
+		$fresh_item = \WC_Order_Factory::get_order_item( $item_id );
+		$this->assertInstanceOf( \WC_Order_Item_Product::class, $fresh_item, 'The item should not have been deleted.' );
+		$this->assertEquals( $original_qty, $fresh_item->get_quantity() );
+	}
+
+	/**
 	 * Does the 'hard work' of triggering an ajax endpoint and capturing the response.
 	 *
 	 * @param string $ajax_action The action to be triggered.
