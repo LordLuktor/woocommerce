@@ -32,7 +32,7 @@ class ItemQuantityLimits {
 		/**
 		 * This filter is documented in includes/admin/meta-boxes/views/html-order-item.php
 		 *
-		 * @since 7.7.0
+		 * @since 5.8.0
 		 */
 		return (string) apply_filters( 'woocommerce_quantity_input_min_admin', $default, $product, 'edit' );
 	}
@@ -50,7 +50,7 @@ class ItemQuantityLimits {
 		/**
 		 * This filter is documented in includes/admin/meta-boxes/views/html-order-item.php
 		 *
-		 * @since 7.7.0
+		 * @since 5.8.0
 		 */
 		$min = (float) apply_filters( 'woocommerce_quantity_input_min_admin', '0', $product, 'add' );
 
