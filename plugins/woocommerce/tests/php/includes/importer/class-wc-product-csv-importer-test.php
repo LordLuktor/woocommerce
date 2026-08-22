@@ -155,6 +155,123 @@ class WC_Product_CSV_Importer_Test extends \WC_Unit_Test_Case {
 	}
 
 	/**
+	 * @testdox Existing products and variations can be updated by Global Unique ID when no ID or SKU is provided.
+	 */
+	public function test_import_updates_existing_products_by_global_unique_id() {
+		$product = WC_Helper_Product::create_simple_product();
+		$product->set_name( 'Original product name' );
+		$product->set_global_unique_id( '1234567890123' );
+		$product->save();
+
+		$parent        = WC_Helper_Product::create_variation_product();
+		$variation_ids = $parent->get_children();
+		$variation     = wc_get_product( reset( $variation_ids ) );
+		$variation->set_name( 'Original variation name' );
+		$variation->set_regular_price( '10' );
+		$variation->set_global_unique_id( '9781234567890' );
+		$variation->save();
+
+		$csv_file = trailingslashit( get_temp_dir() ) . 'import-products-by-global-unique-id.csv';
+		file_put_contents( $csv_file, "Type,GTIN,Name,Regular price\nsimple,123 456 789 0123,Updated product name,15\nvariation,978 123 456 7890,Updated variation name,25\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Test fixture written to the temp dir.
+
+		$importer = new WC_Product_CSV_Importer(
+			$csv_file,
+			array(
+				'parse'           => true,
+				'update_existing' => true,
+				'mapping'         => array(
+					'Type'          => 'type',
+					'GTIN'          => 'global_unique_id',
+					'Name'          => 'name',
+					'Regular price' => 'regular_price',
+				),
+			)
+		);
+		$data     = $importer->import();
+
+		wp_delete_file( $csv_file );
+
+		$this->assertSame( array( $product->get_id(), $variation->get_id() ), $data['updated'] );
+		$this->assertEmpty( $data['imported'] );
+		$this->assertEmpty( $data['imported_variations'] );
+		$this->assertEmpty( $data['failed'] );
+		$this->assertEmpty( $data['skipped'] );
+		$this->assertSame( 'Updated product name', wc_get_product( $product->get_id() )->get_name() );
+		$this->assertSame( '25', wc_get_product( $variation->get_id() )->get_regular_price() );
+
+		WC_Helper_Product::delete_product( $parent->get_id() );
+		WC_Helper_Product::delete_product( $product->get_id() );
+	}
+
+	/**
+	 * @testdox An unmatched Global Unique ID is skipped when updating existing products.
+	 */
+	public function test_import_skips_unmatched_global_unique_id_when_updating_existing_products() {
+		$csv_file = trailingslashit( get_temp_dir() ) . 'import-unmatched-global-unique-id.csv';
+		file_put_contents( $csv_file, "GTIN,Name\n3210987654321,Product that should not be created\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Test fixture written to the temp dir.
+
+		$importer = new WC_Product_CSV_Importer(
+			$csv_file,
+			array(
+				'parse'           => true,
+				'update_existing' => true,
+				'mapping'         => array(
+					'GTIN' => 'global_unique_id',
+					'Name' => 'name',
+				),
+			)
+		);
+		$data     = $importer->import();
+
+		wp_delete_file( $csv_file );
+
+		$this->assertEmpty( $data['updated'] );
+		$this->assertEmpty( $data['imported'] );
+		$this->assertEmpty( $data['imported_variations'] );
+		$this->assertEmpty( $data['failed'] );
+		$this->assertCount( 1, $data['skipped'] );
+		$this->assertSame( 'No matching product exists to update.', $data['skipped'][0]->get_error_message() );
+		$this->assertStringContainsString( '3210987654321', $data['skipped'][0]->get_error_data()['row'] );
+		$this->assertSame( 0, wc_get_product_id_by_global_unique_id( '3210987654321' ) );
+	}
+
+	/**
+	 * @testdox A Global Unique ID match does not update a product unless updating existing products is enabled.
+	 */
+	public function test_import_does_not_update_by_global_unique_id_when_updates_are_disabled() {
+		$product = WC_Helper_Product::create_simple_product();
+		$product->set_name( 'Original product name' );
+		$product->set_global_unique_id( '7654321098765' );
+		$product->save();
+
+		$csv_file = trailingslashit( get_temp_dir() ) . 'import-existing-global-unique-id-with-updates-disabled.csv';
+		file_put_contents( $csv_file, "GTIN,Name\n7654321098765,Updated product name\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Test fixture written to the temp dir.
+
+		$importer = new WC_Product_CSV_Importer(
+			$csv_file,
+			array(
+				'parse'   => true,
+				'mapping' => array(
+					'GTIN' => 'global_unique_id',
+					'Name' => 'name',
+				),
+			)
+		);
+		$data     = $importer->import();
+
+		wp_delete_file( $csv_file );
+
+		$this->assertEmpty( $data['updated'] );
+		$this->assertEmpty( $data['imported'] );
+		$this->assertEmpty( $data['imported_variations'] );
+		$this->assertCount( 1, $data['failed'] );
+		$this->assertEmpty( $data['skipped'] );
+		$this->assertSame( 'Original product name', wc_get_product( $product->get_id() )->get_name() );
+
+		WC_Helper_Product::delete_product( $product->get_id() );
+	}
+
+	/**
 	 * @testdox Test that new variations of an existing variable product are created when updating existing products.
 	 */
 	public function test_import_creates_new_variations_of_existing_products_26256() {

@@ -243,9 +243,15 @@ abstract class WC_Product_Importer implements WC_Importer_Interface {
 			do_action( 'woocommerce_product_import_before_process_item', $data );
 			$data = apply_filters( 'woocommerce_product_import_process_item_data', $data );
 
-			// Get product ID from SKU if created during the importation.
-			if ( empty( $data['id'] ) && ! empty( $data['sku'] ) ) {
-				$product_id = wc_get_product_id_by_sku( $data['sku'] );
+			// Get the product ID from a unique identifier when the row does not carry one.
+			if ( empty( $data['id'] ) ) {
+				$product_id = 0;
+
+				if ( ! empty( $data['sku'] ) ) {
+					$product_id = wc_get_product_id_by_sku( $data['sku'] );
+				} elseif ( ! empty( $this->params['update_existing'] ) && ! empty( $data['global_unique_id'] ) ) {
+					$product_id = wc_get_product_id_by_global_unique_id( $data['global_unique_id'] );
+				}
 
 				if ( $product_id ) {
 					$data['id'] = $product_id;
