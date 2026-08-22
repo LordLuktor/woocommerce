@@ -993,6 +993,8 @@ function wc_get_page_children( $page_id ) {
 			'numberposts' => -1, // @codingStandardsIgnoreLine
 			'post_status' => 'any',
 			'fields'      => 'ids',
+			// Query all languages when a multilingual plugin supports this query var.
+			'lang'        => '',
 		)
 	);
 

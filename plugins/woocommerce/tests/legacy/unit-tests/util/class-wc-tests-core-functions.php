@@ -758,11 +758,9 @@ class WC_Tests_Core_Functions extends WC_Unit_Test_Case {
 	}
 
 	/**
-	 * Test wc_get_page_children function.
-	 *
-	 * @return void
+	 * @testdox wc_get_page_children returns all descendants regardless of the current language query.
 	 */
-	public function test_wc_get_page_children() {
+	public function test_wc_get_page_children(): void {
 		$page_id = wp_insert_post(
 			array(
 				'post_title'  => 'Parent Page',
@@ -777,19 +775,48 @@ class WC_Tests_Core_Functions extends WC_Unit_Test_Case {
 		$child_page_id = wp_insert_post(
 			array(
 				'post_parent' => $page_id,
-				'post_title'  => 'Parent Page',
+				'post_title'  => 'Child Page',
 				'post_type'   => 'page',
-				'post_name'   => 'parent-page',
+				'post_name'   => 'child-page',
 				'post_status' => 'publish',
 				'post_author' => 1,
 				'menu_order'  => 0,
 			)
 		);
-		$children      = wc_get_page_children( $page_id );
-		$this->assertEquals( $child_page_id, $children[0] );
 
-		wp_delete_post( $page_id, true );
-		wp_delete_post( $child_page_id, true );
+		$grandchild_page_id = wp_insert_post(
+			array(
+				'post_parent' => $child_page_id,
+				'post_title'  => 'Grandchild Page',
+				'post_type'   => 'page',
+				'post_name'   => 'grandchild-page',
+				'post_status' => 'publish',
+				'post_author' => 1,
+				'menu_order'  => 0,
+			)
+		);
+
+		$filter_by_current_language = static function ( $query ) {
+			if ( 'page' === $query->get( 'post_type' ) && ( ! isset( $query->query_vars['lang'] ) || '' !== $query->query_vars['lang'] ) ) {
+				$query->set( 'post__in', array( 0 ) );
+			}
+		};
+
+		add_action( 'parse_query', $filter_by_current_language );
+		try {
+			$children = wc_get_page_children( $page_id );
+		} finally {
+			remove_action( 'parse_query', $filter_by_current_language );
+			wp_delete_post( $grandchild_page_id, true );
+			wp_delete_post( $child_page_id, true );
+			wp_delete_post( $page_id, true );
+		}
+
+		$this->assertEqualsCanonicalizing(
+			array( $child_page_id, $grandchild_page_id ),
+			$children,
+			'Page descendants should not depend on the current request language.'
+		);
 	}
 
 	/**
