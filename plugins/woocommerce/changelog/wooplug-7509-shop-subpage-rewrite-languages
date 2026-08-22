@@ -1,0 +1,4 @@
+Significance: patch
+Type: fix
+
+Generate Shop sub-page rewrite rules independently of the current language.
