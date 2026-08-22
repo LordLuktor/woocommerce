@@ -411,8 +411,17 @@ class Endpoint {
 		if ( 'yes' !== get_option( 'woocommerce_review_order_flush_rewrite_pending' ) ) {
 			return;
 		}
-		flush_rewrite_rules( false );
+		if ( wp_installing() ) {
+			\WC_Post_Types::flush_rewrite_rules();
+		} else {
+			flush_rewrite_rules( false );
+		}
 		delete_option( 'woocommerce_review_order_flush_rewrite_pending' );
+
+		if ( wp_installing() ) {
+			wp_cache_delete( 'woocommerce_review_order_flush_rewrite_pending', 'options' );
+			wp_cache_delete( 'alloptions', 'options' );
+		}
 	}
 
 	/**
